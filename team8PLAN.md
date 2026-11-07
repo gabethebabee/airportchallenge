@@ -1,5 +1,7 @@
 # Team 8 build plan
 
+**Implementation status:** the process-document plan is now implemented in `team8monitor.py`, the live UI and scanner preview path. See `team8LIVE.md`. Source-backed MQTT telemetry export and optional one-camera AB regions are available. Earlier deferrals below describe the original MVP proposal; motor inspection flags are now implemented, but predictive maintenance/current-based diagnosis remains dependent on actual data. No lab deployment has occurred.
+
 ## Update after inspecting the organizer ZIP
 
 See `team8CONTROL.md` for the verified hardware mapping and revised scope. The optional run/stop integration is now implemented but not commissioned. Prioritize one physical checkpoint, camera stoppage detection, and operator alerts. The three demo cameras/motors are illustrative, not discovered equipment. The encoder supplies linear speed in cm/s; no current sensor data is supplied. Actual control is isolated so it can be disabled without losing the demo UI. Multi-checkpoint bag histories and current-based maintenance remain unconnected until observations/sensors exist.

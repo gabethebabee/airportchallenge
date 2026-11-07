@@ -9,46 +9,110 @@ import team8dashboard as dashboard
 from team8transit import TransitTracker
 
 
+# Group the related offline regression checks so failures identify the affected feature.
+# These regression scenarios group the behavior of this feature in isolation. Shared setup
+# supplies temporary/in-memory state; no test is allowed to depend on a running physical
+# conveyor. A failure identifies a broken assumption before deployment.
 class TimingTests(unittest.TestCase):
+    # Create isolated in-memory state and a controllable clock so this test never touches real
+    # hardware.
+    # Create a new isolated test world before every scenario, including an injectable clock
+    # where timing matters. Sharing no mutable records between scenarios prevents one passing
+    # test from hiding a failure in the next.
     def setUp(self):
         self.now=1000.0
         self.tracker=TransitTracker(':memory:',clock=lambda:self.now)
+    # Close the test databases; the next test starts with a clean state.
+    # Close the isolated stores after each scenario so file handles and state do not leak into
+    # later tests. Real project databases are never opened by this cleanup.
     def tearDown(self): self.tracker.close()
+    # Submit a checkpoint to the test tracker while keeping the test barcode/source easy to
+    # override.
+    # Provide common barcode/source defaults while allowing the scenario to vary checkpoint and
+    # event identity. This goes through the real tracker logic rather than manually editing its
+    # database.
     def scan(self,point,barcode='bag1',source='camera',event=None):
         return self.tracker.scan(barcode,point,source,event)
+    # Read the most recent journey so each test can assert its elapsed time and classification.
+    # Read the newest recorded journey through the same snapshot method the dashboard uses.
+    # Assertions therefore check the exposed timing classification as well as stored
+    # departure/arrival behavior.
     def status(self): return self.tracker.snapshot()['trips'][0]
+    # Regression check: matching bag time and limits. Uses fakes/in-memory state, never live
+    # equipment.
+    # This scenario exercises matching bag time and limits. The setup uses controlled inputs and
+    # a fake clock or mocked request instead of contacting a broker, camera or PLC. Assertions
+    # below define the result that must continue working after future edits.
     def test_matching_bag_time_and_limits(self):
         self.tracker.configure(4,10);self.scan('A');self.now+=7;self.scan('B')
         self.assertEqual(self.status()['elapsed_seconds'],7)
         self.assertEqual(self.status()['status'],'On time')
+    # Regression check: repeat A never restarts. Uses fakes/in-memory state, never live
+    # equipment.
+    # This scenario exercises repeat A never restarts. The setup uses controlled inputs and a
+    # fake clock or mocked request instead of contacting a broker, camera or PLC. Assertions
+    # below define the result that must continue working after future edits.
     def test_repeat_A_never_restarts(self):
         self.scan('A');self.now+=8;self.scan('A');self.now+=3
         self.assertEqual(self.status()['status'],'Overdue')
         self.scan('B');self.assertEqual(self.status()['status'],'Late')
         self.assertEqual(self.status()['elapsed_seconds'],11)
+    # Regression check: different bag or source cannot complete. Uses fakes/in-memory state,
+    # never live equipment.
+    # This scenario exercises different bag or source cannot complete. The setup uses controlled
+    # inputs and a fake clock or mocked request instead of contacting a broker, camera or PLC.
+    # Assertions below define the result that must continue working after future edits.
     def test_different_bag_or_source_cannot_complete(self):
         self.scan('A');self.now+=5;self.scan('B','other');self.scan('B',source='manual')
         self.assertEqual(self.status()['status'],'Travelling')
+    # Regression check: B first creates no fake trip. Uses fakes/in-memory state, never live
+    # equipment.
+    # This scenario exercises B first creates no fake trip. The setup uses controlled inputs and
+    # a fake clock or mocked request instead of contacting a broker, camera or PLC. Assertions
+    # below define the result that must continue working after future edits.
     def test_B_first_creates_no_fake_trip(self):
         self.assertIn('without active A',self.scan('B')['message'])
         self.assertEqual(self.tracker.snapshot()['trips'],[])
+    # Regression check: idempotent retry and event collision. Uses fakes/in-memory state, never
+    # live equipment.
+    # This scenario exercises idempotent retry and event collision. The setup uses controlled
+    # inputs and a fake clock or mocked request instead of contacting a broker, camera or PLC.
+    # Assertions below define the result that must continue working after future edits.
     def test_idempotent_retry_and_event_collision(self):
         self.scan('A',event='event1');self.now+=2;self.scan('A',event='event1')
         self.assertEqual(len(self.tracker.snapshot()['scans']),1)
         with self.assertRaises(ValueError):self.scan('B',event='event1')
+    # Regression check: standards frozen and early arrival. Uses fakes/in-memory state, never
+    # live equipment.
+    # This scenario exercises standards frozen and early arrival. The setup uses controlled
+    # inputs and a fake clock or mocked request instead of contacting a broker, camera or PLC.
+    # Assertions below define the result that must continue working after future edits.
     def test_standards_frozen_and_early_arrival(self):
         self.tracker.configure(5,10);self.scan('A');self.tracker.configure(0,2)
         self.now+=3;self.scan('B');self.assertEqual(self.status()['status'],'Too fast')
         self.assertEqual(self.status()['maximum'],10)
+    # Regression check: recirc and repeated B. Uses fakes/in-memory state, never live equipment.
+    # This scenario exercises recirc and repeated B. The setup uses controlled inputs and a fake
+    # clock or mocked request instead of contacting a broker, camera or PLC. Assertions below
+    # define the result that must continue working after future edits.
     def test_recirc_and_repeated_B(self):
         self.scan('A');self.now+=5;self.scan('B');self.scan('B')
         self.assertEqual(len(self.tracker.snapshot()['trips']),1)
         self.now+=4;self.scan('A');self.assertEqual(len(self.tracker.snapshot()['trips']),2)
+    # Regression check: limits and bad scans. Uses fakes/in-memory state, never live equipment.
+    # This scenario exercises limits and bad scans. The setup uses controlled inputs and a fake
+    # clock or mocked request instead of contacting a broker, camera or PLC. Assertions below
+    # define the result that must continue working after future edits.
     def test_limits_and_bad_scans(self):
         for lo,hi in [(0,0),(-1,10),(0,float('nan')),(0,float('inf'))]:
             with self.assertRaises(ValueError):self.tracker.configure(lo,hi)
         with self.assertRaises(ValueError):self.scan('C')
         with self.assertRaises(ValueError):self.scan('A','')
+    # Regression check: restart retains journey. Uses fakes/in-memory state, never live
+    # equipment.
+    # This scenario exercises restart retains journey. The setup uses controlled inputs and a
+    # fake clock or mocked request instead of contacting a broker, camera or PLC. Assertions
+    # below define the result that must continue working after future edits.
     def test_restart_retains_journey(self):
         with tempfile.TemporaryDirectory() as d:
             path=str(Path(d)/'team8test.sqlite3')
@@ -56,7 +120,17 @@ class TimingTests(unittest.TestCase):
             t=TransitTracker(path,clock=lambda:108);t.scan('bag','B')
             self.assertEqual(t.snapshot()['trips'][0]['elapsed_seconds'],8);t.close()
 
+    # Regression check: scan api authentication and recording. Uses fakes/in-memory state, never
+    # live equipment.
+    # This scenario exercises scan api authentication and recording. The setup uses controlled
+    # inputs and a fake clock or mocked request instead of contacting a broker, camera or PLC.
+    # Assertions below define the result that must continue working after future edits.
     def test_scan_api_authentication_and_recording(self):
+        # Build an in-memory HTTP handler so authorization/routes can be tested without a
+        # network connection.
+        # Construct an HTTP handler around byte buffers and mocked headers/response methods. The
+        # real route code can then be exercised without opening a network socket or permitting a
+        # physical output request.
         def handler(headers, body):
             h=object.__new__(dashboard.DashboardHandler)
             h.path='/api/transit/scan';h.server=MagicMock(server_port=8080)

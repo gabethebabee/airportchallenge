@@ -10,15 +10,37 @@ import argparse
 import json
 import secrets
 import os
+import threading
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+from http.server import BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer
+except ImportError:  # Python 3.6 on older Jetson images.
+    from http.server import HTTPServer
+    from socketserver import ThreadingMixIn
+
+    # Compatibility fallback: handle simultaneous requests on older Python versions shipped on
+    # Jetson.
+    # Older Python images do not provide the newer threaded server class. Combining the standard
+    # mixin and HTTP server lets camera uploads, polling and button requests proceed
+    # independently instead of blocking each other.
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
 from team8transit import TransitTracker
+from team8monitor import CameraFrames, MQTTInputs, SensorMonitor
 
 # OPTIONAL HARDWARE MODULE: comment out this import to remove the integration.
 from team8conveyor_control import ConveyorControl, ENABLE_CONVEYOR_CONTROL
 
+# These objects are started in main(), not on import, so tests can supply safe in-memory substitutes.
 CONTROL = None
 TRACKER = None
+SENSORS = None
+MQTT = None
+FRAMES = CameraFrames()
+# This browser-session token is separate from the scanner password and the PLC control token.
 CONTROL_SESSION = secrets.token_urlsafe(32)
 
 
@@ -26,7 +48,17 @@ ASSET_DIR = Path(__file__).resolve().parent
 
 
 
+# HTTP endpoints used by the browser and scanner; this class routes requests to the owning
+# backend.
+# The browser asks this class for pages, sensor state and recorded journeys. Scanner uploads
+# arrive here too. Each endpoint validates its caller before handing data to a store; the HTTP
+# layer does not calculate motor health itself.
 class DashboardHandler(BaseHTTPRequestHandler):
+    # Encode an API response, declare its byte length, and prevent cached sensor/status
+    # responses.
+    # Other endpoints pass in a Python dictionary and HTTP status code. This turns the
+    # dictionary into UTF-8 JSON and sends the correct headers so the browser knows how to read
+    # it and does not reuse an old sensor response.
     def send_json(self, data, status=200):
         body = json.dumps(data).encode('utf-8')
         self.send_response(status)
@@ -36,6 +68,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # Check the requested host and browser origin before allowing local dashboard actions.
+    # The server normally listens on this computer only. Host and Origin checks additionally
+    # distinguish the local dashboard from requests initiated by another website; this check is
+    # one part of authorization, not the PLC password.
     def local_request(self):
         # Bind to loopback and reject unexpected Host headers / cross-site requests.
         expected = f'127.0.0.1:{self.server.server_port}'
@@ -43,7 +79,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         return host in (expected, f'localhost:{self.server.server_port}') and (not origin or origin == 'http://' + host)
 
+    # Dispatch incoming updates/actions; conveyor commands remain behind their own session
+    # check.
+    # POST requests change something, such as saving a scan, acknowledging an alert or
+    # explicitly requesting a conveyor action. This dispatcher separates those routes so scanner
+    # credentials cannot grant physical-control access.
     def do_POST(self):
+        if self.path.startswith('/api/camera/'):
+            return self.camera_post()
+        if self.path.startswith('/api/monitor/'):
+            return self.monitor_post()
         if self.path.startswith('/api/transit/'):
             return self.transit_post()
         if self.path != '/api/conveyor':
@@ -66,7 +111,51 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Never leak PLC credentials or automatically retry physical commands.
             return self.send_json({'message': 'PLC request failed or was rejected; inspect PLC and connection. Command outcome unknown.'}, 502)
 
+    # Serve only allowlisted frontend files, recorded state, and fresh camera frames.
+    # GET requests read state or fetch frontend assets. Route-specific stores own the returned
+    # data, while a fixed filename allowlist prevents a URL from exposing arbitrary project
+    # files. Reading this interface never requests a motor run.
     def do_GET(self):
+        self.path = urlsplit(self.path).path
+        if self.path.startswith('/api/transit/trip/'):
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            if TRACKER is None:
+                return self.send_json({'message': 'Tracker unavailable'}, 503)
+            try:
+                return self.send_json(TRACKER.history(int(self.path.rsplit('/', 1)[1])))
+            except ValueError:
+                return self.send_json({'message': 'Journey not found'}, 404)
+        if self.path == '/api/monitor':
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            if SENSORS is None or TRACKER is None:
+                return self.send_json({'message': 'Monitor unavailable'}, 503)
+            state = SENSORS.snapshot()
+            bags = TRACKER.incidents()
+            overdue = [item for item in bags if item['resolved'] is None and item['source'] != 'manual']
+            # Combine only physical camera/MQTT bag evidence with fresh stall readings; manual tests are excluded.
+            state['possible_jam'] = bool(overdue and state['fresh'] and state['state'] == 'Stalled')
+            threshold = state['limits']['high_current_a']
+            state['high_current_evidence'] = (state['possible_jam'] and threshold is not None and
+                                              state['current_a'] is not None and state['current_a'] > threshold)
+            state['incidents'] = sorted(state['incidents'] + bags, key=lambda item: item['raised'], reverse=True)
+            state['cameras'] = FRAMES.status()
+            state['checkpoint_topics'] = MQTT.config.get('checkpoint_topics', {}) if MQTT else {}
+            state['mqtt_errors'] = MQTT.errors if MQTT else 0
+            return self.send_json(state)
+        if self.path in ('/api/camera/A', '/api/camera/B'):
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            frame = FRAMES.get(self.path[-1])
+            if frame is None:
+                return self.send_json({'message': 'Camera unavailable or stale'}, 503)
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Content-Length', str(len(frame)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return self.wfile.write(frame)
         if self.path == '/api/transit':
             if not self.local_request():
                 return self.send_json({'message': 'Local dashboard requests only'}, 403)
@@ -80,11 +169,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path in ('/', '/index.html'):
             body = (ASSET_DIR / 'team8dashboard.html').read_bytes()
             content_type = 'text/html; charset=utf-8'
-        elif self.path in ('/team8dashboard.css', '/team8dashboard.js'):
+        # An explicit asset list prevents URLs from reading arbitrary files from the project folder.
+        elif self.path in ('/team8dashboard.css', '/team8dashboard.js', '/team8live.js'):
             body = (ASSET_DIR / self.path[1:]).read_bytes()
             content_type = ('text/css' if self.path.endswith('.css') else 'text/javascript') + '; charset=utf-8'
         elif self.path == '/health':
-            body = json.dumps({'status': 'ok', 'mode': 'synthetic'}).encode('utf-8')
+            body = json.dumps({'status': 'ok', 'mode': 'monitoring', 'mqtt_enabled': MQTT is not None}).encode('utf-8')
             content_type = 'application/json'
         else:
             self.send_error(404)
@@ -96,6 +186,66 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # Check the shared scanner password without exposing it to the browser page.
+    # The camera process sends a shared token in an HTTP header. This checks it against the
+    # server environment using a timing-resistant comparison; the token is not read from a
+    # submitted barcode or exposed in the page source.
+    def scan_authorized(self):
+        token = os.environ.get('TEAM8_SCAN_TOKEN', '')
+        return len(token) >= 24 and secrets.compare_digest(self.headers.get('X-Team8-Scan-Token', ''), token)
+
+    # Accept a bounded, timestamped JPEG from the scanner; no camera is opened by the server.
+    # The scanner sends JPEG bytes and a capture timestamp for A or B. Size, format markers and
+    # age are checked before the in-memory frame is replaced. Invalid or delayed frames do not
+    # become a fresh-looking preview.
+    def camera_post(self):
+        if self.path not in ('/api/camera/A', '/api/camera/B'):
+            return self.send_json({'message': 'Unknown checkpoint'}, 404)
+        if not self.scan_authorized():
+            return self.send_json({'message': 'Invalid scan token'}, 403)
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 4 <= size <= 300000:
+                raise ValueError('JPEG must be under 300 kB')
+            FRAMES.put(self.path[-1], self.rfile.read(size), self.headers.get('X-Team8-Captured-At'))
+            return self.send_json({'message': 'Preview updated'})
+        except ValueError as error:
+            return self.send_json({'message': str(error)}, 400)
+
+    # Apply health settings or acknowledge an incident; acknowledgement does not resolve its
+    # condition.
+    # The live settings form and incident buttons use this route with the local session token.
+    # Settings go to the sensor monitor, while acknowledgements go to the appropriate bag/sensor
+    # store; neither operation publishes a motor command.
+    def monitor_post(self):
+        if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
+            return self.send_json({'message': 'Invalid local session'}, 403)
+        if SENSORS is None or TRACKER is None:
+            return self.send_json({'message': 'Monitor unavailable'}, 503)
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 4096:
+                raise ValueError('Invalid request size')
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload, dict):
+                raise ValueError('Expected JSON object')
+            if self.path == '/api/monitor/limits':
+                return self.send_json(SENSORS.configure(payload))
+            if self.path == '/api/monitor/ack':
+                kind, incident_id = payload.get('kind'), payload.get('id')
+                if type(incident_id) is not int or kind not in ('bag', 'sensor'):
+                    raise ValueError('Invalid incident')
+                target = TRACKER if kind == 'bag' else SENSORS
+                return self.send_json(target.acknowledge(incident_id))
+            return self.send_json({'message': 'Not found'}, 404)
+        except (TypeError, ValueError) as error:
+            return self.send_json({'message': str(error)}, 400)
+
+    # Keep manual tests and authenticated scanner submissions in their correct source
+    # namespaces.
+    # This accepts manual browser scans, authenticated camera scans and new timing standards.
+    # Sources remain distinct so pressing a test button cannot finish a camera journey;
+    # validation errors return a useful client response instead of a server crash.
     def transit_post(self):
         browser = self.local_request() and self.headers.get('X-Team8-Session') == CONTROL_SESSION
         token = os.environ.get('TEAM8_SCAN_TOKEN', '')
@@ -126,16 +276,49 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.send_json({'message':'Timing record could not be saved; inspect server logs/database'},500)
 
 
+# Entry point: read terminal options, start the requested components, and clean up on exit.
+# Terminal options choose the HTTP address and optional MQTT config. This creates the persistent
+# stores, starts the subscriber/supervisor, and serves the page. Shutdown stops background users
+# before closing their database connections.
 def main():
-    global CONTROL, TRACKER
+    global CONTROL, TRACKER, SENSORS, MQTT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', default='127.0.0.1', help='Use 0.0.0.0 only when remote checkpoint scanners must connect')
+    parser.add_argument('--mqtt-config', help='Path to a team8 MQTT configuration JSON; omitted means MQTT disabled')
     args = parser.parse_args()
     # OPTIONAL HARDWARE HOOK: comment out this block to leave controls disabled.
     if globals().get('ENABLE_CONVEYOR_CONTROL', False):
         CONTROL = ConveyorControl(enabled=True)
     TRACKER = TransitTracker(str(Path(__file__).with_name('team8transit.sqlite3')))
+    config = {}
+    # Omitting this option leaves monitoring usable without trying to connect to a broker.
+    if args.mqtt_config:
+        config = json.loads(Path(args.mqtt_config).read_text(encoding='utf-8-sig'))
+    SENSORS = SensorMonitor(str(ASSET_DIR / 'team8monitor.sqlite3'),
+                            config.get('station_id', 'Conveyor3'), config.get('limits'))
+    if config:
+        MQTT = MQTTInputs(config, TRACKER, SENSORS)
+        try:
+            MQTT.start()
+        except ImportError:
+            parser.error('Paho-MQTT is missing. Use the organizer Jetson environment or install it before going offline.')
+    stop_monitor = threading.Event()
+
+    # Evaluate deadlines/health every second even when no browser tab is open.
+    # This loop runs independently of browser polling and checks deadlines once per second.
+    # Consequently a bag can become overdue while the browser is closed. Exceptions are reported
+    # without silently terminating all later monitoring evaluations.
+    def supervise():
+        while not stop_monitor.wait(1):
+            try:
+                TRACKER.evaluate_incidents()
+                SENSORS.snapshot()
+            except Exception as error:
+                print('Monitoring evaluation failed:', type(error).__name__)
+
+    worker = threading.Thread(target=supervise, daemon=True)
+    worker.start()
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f'Team 8 dashboard: http://127.0.0.1:{args.port}')
     print('Demo dashboard. Hardware bridge ' + ('ENABLED' if CONTROL else 'DISABLED') + '. Ctrl+C to stop.')
@@ -145,6 +328,12 @@ def main():
         pass
     finally:
         server.server_close()
+        # Stop background producers before closing the SQLite connections they can still access.
+        stop_monitor.set()
+        worker.join(timeout=3)
+        if MQTT:
+            MQTT.stop()
+        SENSORS.close()
         TRACKER.close()
 
 

@@ -1,5 +1,7 @@
 # Run the dashboard
 
+**Latest deployment:** Live monitor is now the default tab, and `team8live.js` / `team8monitor.py` are additional runtime files. Use `team8LIVE.md` and the reproducible `team8jetson.zip` package; the seven-file USB instructions below predate these additions. Hardware commissioning is still separate from software verification.
+
 ## Small-screen layout and source files
 
 The dashboard is designed for 800×480 / 1024×600 landscape displays and narrower portrait screens. It opens on A-to-B timing. Navigation remains visible while scrolling; touch controls are at least 48px tall. Timing standards and manual scan controls expand on demand. Small-screen tables become labelled cards with prominent time/result fields. Belt control has its own tab. Demo totals only appear in Overview.

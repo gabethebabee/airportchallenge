@@ -7,6 +7,11 @@ import zipfile
 ROOT = Path(__file__).resolve().parent
 
 
+# Construct an isolated disabled control tab from organizer channel definitions; this only
+# writes a local JSON file.
+# Read organizer node definitions from the source archive, copy the required channel mappings
+# and build a separate disabled tab. Authenticated bounded run/stop logic is added while
+# retaining route rejection stops; writing the JSON does not deploy it.
 def build():
     with zipfile.ZipFile(ROOT / 'F26-Airport-Innovation-Challenge.zip') as archive:
         prefix = 'F26-Airport-Innovation-Challenge/baggage-handling-system-subproblem/barcode-conveyor/'
@@ -17,6 +22,11 @@ def build():
     nodes = [{'id': tab, 'type': 'tab', 'label': 'Team8 conveyor control', 'disabled': True,
               'info': 'Derived from organizer flows.json and Basic Motion and Divert.json. See team8CONTROL.md before enabling.'}]
 
+    # Create one Node-RED node with explicit output wires so the generated graph remains
+    # inspectable.
+    # Each call describes a node type, label, optional fields and explicit downstream wires. The
+    # helper supplies consistent canvas/tab metadata while keeping the actual control logic
+    # visible in the surrounding calls.
     def add(id, type, name='', wires=None, **extra):
         node = {'id': id, 'type': type, 'z': tab, 'name': name,
                 'x': extra.pop('x', 400), 'y': extra.pop('y', 200), 'wires': wires or [[]], **extra}
@@ -40,8 +50,21 @@ def build():
     add('team8-response','http response','Command result',statusCode='',headers={},x=1050,y=80)
     add('team8-command','function','Validate command and route gate',
         [['team8-response'],['team8-write-speed'],['team8-write-direction']],outputs=3,
-        initialize='flow.set("team8Deadline",0); flow.set("team8RouteOK",false); flow.set("team8LastCommand","unknown after deploy");',
-        func='''const token = env.get("TEAM8_CONTROL_TOKEN");
+        initialize='''/* TEAM8 DETAIL:
+ * This runs when the node is initialized or redeployed, before incoming messages are
+ * processed. Cached timestamps, counters or permission flags start from an explicit
+ * baseline so old context cannot masquerade as newly observed state.
+ */
+// TEAM8 NOTE: Initialize node-local timing/state for Validate command and route gate.
+flow.set("team8Deadline",0); flow.set("team8RouteOK",false); flow.set("team8LastCommand","unknown after deploy");''',
+        func='''/* TEAM8 DETAIL:
+ * The HTTP payload requests status, stop or a bounded run. Authentication and a recent
+ * allowed route are checked before any output message is returned. The three return
+ * positions feed the HTTP reply, belt output and direction path; a reply confirms a
+ * request, not physical motion.
+ */
+// TEAM8 NOTE: Validate command and route gate; msg is the incoming message and returned messages follow the configured wires.
+const token = env.get("TEAM8_CONTROL_TOKEN");
 const reply = (code, message, speed, direction) => {
     msg.statusCode = code;
     const seen = flow.get("team8EncoderAt") || 0;
@@ -73,12 +96,25 @@ return reply(200,"3-second run requested; verify motion at the belt",undefined,0
     direction = next(n for n in nodes if n['id']=='team8-write-direction')
     direction['wires']=[['team8-after-direction']]
     add('team8-after-direction','function','Run only if lease and route still valid',[['team8-write-speed']],outputs=1,
-        func='return flow.get("team8RouteOK") === true && Date.now() < (flow.get("team8Deadline")||0) ? {payload:2.3} : {payload:0};',x=820,y=140)
+        func='/* TEAM8 DETAIL:\n * A run message arrives only after the fixed direction write completes. Route\n * permission and the three-second deadline are checked again, because a rejection or\n * expiry may have happened while that earlier write was queued. Invalid permission\n * produces zero output instead of restarting.\n */\n// TEAM8 NOTE: Run only if lease and route still valid; msg is the incoming message and returned messages follow the configured wires.\nreturn flow.get("team8RouteOK") === true && Date.now() < (flow.get("team8Deadline")||0) ? {payload:2.3} : {payload:0};',x=820,y=140)
     add('team8-tick','inject','Stop on deploy / pulse expiry',[['team8-watchdog']],repeat='0.25',crontab='',once=True,onceDelay=0.1,
         props=[{'p':'payload'}],payload='',payloadType='date',x=170,y=280)
     add('team8-watchdog','function','Bound each run to 3 seconds',[['team8-write-speed']],outputs=1,
-        initialize='flow.set("team8NeedsStop",true); flow.set("team8Deadline",0);',
-        func='''if (flow.get("team8NeedsStop") || ((flow.get("team8Deadline")||0)>0 && Date.now()>=flow.get("team8Deadline"))) {
+        initialize='''/* TEAM8 DETAIL:
+ * This runs when the node is initialized or redeployed, before incoming messages are
+ * processed. Cached timestamps, counters or permission flags start from an explicit
+ * baseline so old context cannot masquerade as newly observed state.
+ */
+// TEAM8 NOTE: Initialize node-local timing/state for Bound each run to 3 seconds.
+flow.set("team8NeedsStop",true); flow.set("team8Deadline",0);''',
+        func='''/* TEAM8 DETAIL:
+ * A periodic inject invokes this independently of the browser. Deployment and run
+ * expiry request zero belt output and clear the active lease. This software timer
+ * bounds normal requests but cannot replace the physical emergency stop if the PLC
+ * runtime fails.
+ */
+// TEAM8 NOTE: Bound each run to 3 seconds; msg is the incoming message and returned messages follow the configured wires.
+if (flow.get("team8NeedsStop") || ((flow.get("team8Deadline")||0)>0 && Date.now()>=flow.get("team8Deadline"))) {
  flow.set("team8NeedsStop",false); flow.set("team8Deadline",0); flow.set("team8Output",0);
  flow.set("team8LastCommand","automatic stop requested"); return {payload:0};
 } return null;''',x=550,y=280)
@@ -86,8 +122,21 @@ return reply(200,"3-second run requested; verify motion at the belt",undefined,0
     route.update(id='team8-routing',z=tab,broker=broker['id'],name='Organizer routing input',wires=[['team8-route-check']],x=170,y=400,datatype='utf8',rap=False)
     nodes.append(route)
     add('team8-route-check','function','Preserve rejection stop; do not auto-restart',[['team8-write-speed']],outputs=1,
-        initialize='flow.set("team8RouteOK",false);',
-        func='''let p; try {p=typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;} catch(e) {p=null;}
+        initialize='''/* TEAM8 DETAIL:
+ * This runs when the node is initialized or redeployed, before incoming messages are
+ * processed. Cached timestamps, counters or permission flags start from an explicit
+ * baseline so old context cannot masquerade as newly observed state.
+ */
+// TEAM8 NOTE: Initialize node-local timing/state for Preserve rejection stop; do not auto-restart.
+flow.set("team8RouteOK",false);''',
+        func='''/* TEAM8 DETAIL:
+ * The assigned barcode topic supplies a picklist decision and virtual destination.
+ * Retained, invalid or mismatched routing requests stop the belt and revoke run
+ * permission. A valid new scan grants permission but never automatically starts
+ * movement.
+ */
+// TEAM8 NOTE: Preserve rejection stop; do not auto-restart; msg is the incoming message and returned messages follow the configured wires.
+let p; try {p=typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;} catch(e) {p=null;}
 const active = global.get("active_conveyor") || "conveyor_1";
 const ok = !msg.retain && p && typeof p.barcode === 'string' && p.barcode.length>0 && p.in_picklist === true && p.conveyor === active;
 flow.set("team8RouteOK",!!ok); flow.set("team8RouteAt",Date.now()); flow.set("team8RouteDestination",ok ? p.conveyor : null);
@@ -97,8 +146,21 @@ return null;''',x=550,y=400)
     encoder.update(id='team8-encoder',z=tab,device=device['id'],wires=[['team8-encoder-speed']],x=170,y=520)
     nodes.append(encoder)
     add('team8-encoder-speed','function','Organizer encoder formula (cm/s)',outputs=1,
-        initialize='flow.set("team8PreviousEncoder",null);flow.set("team8EncoderAt",0);flow.set("team8Speed",null);',
-        func='''const now=Date.now(), count=Number(msg.payload), prev=flow.get("team8PreviousEncoder");
+        initialize='''/* TEAM8 DETAIL:
+ * This runs when the node is initialized or redeployed, before incoming messages are
+ * processed. Cached timestamps, counters or permission flags start from an explicit
+ * baseline so old context cannot masquerade as newly observed state.
+ */
+// TEAM8 NOTE: Initialize node-local timing/state for Organizer encoder formula (cm/s).
+flow.set("team8PreviousEncoder",null);flow.set("team8EncoderAt",0);flow.set("team8Speed",null);''',
+        func='''/* TEAM8 DETAIL:
+ * Consecutive encoder counts and elapsed milliseconds produce belt travel per second
+ * using the organizer gearing and pulley circumference. A reset/decreasing counter or
+ * stale update cannot establish a normal speed, so invalid conversion results remain
+ * unknown.
+ */
+// TEAM8 NOTE: Organizer encoder formula (cm/s); msg is the incoming message and returned messages follow the configured wires.
+const now=Date.now(), count=Number(msg.payload), prev=flow.get("team8PreviousEncoder");
 if (!Number.isFinite(count)) return null;
 if (prev && now>prev.time) {
  const delta=count-prev.count;

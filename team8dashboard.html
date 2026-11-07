@@ -1,3 +1,4 @@
+<!-- Page structure only. Styles are in team8dashboard.css; behavior is in the two JS files. -->
 <!doctype html>
 <html lang="en">
   <head>
@@ -7,6 +8,12 @@
     <link rel="stylesheet" href="/team8dashboard.css">
   </head>
   <body>
+    <!-- Compact persistent identity/clock; real connection state belongs to the live panel. -->
+    <!-- SECTION DETAIL:
+      The header identifies the application and shows the local display clock. Live broker
+      and sensor freshness are shown in their own panel, because a ticking browser clock
+      does not mean the physical data feed is working.
+    -->
     <header>
       <div>
         <div class="eyebrow">Team 8 / Operations</div>
@@ -19,7 +26,14 @@
       </div>
     </header>
     <main>
+      <!-- These ids/data-tab values connect buttons to the panels and keyboard navigation code. -->
+      <!-- SECTION DETAIL:
+        Each button links to a matching panel through its id and data-tab value.
+        JavaScript updates the active/accessible state, while CSS keeps navigation
+        reachable as the operator scrolls through long histories on the small screen.
+      -->
       <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button role="tab" id="tab-live" aria-controls="live" aria-selected="false" data-tab="live">Live monitor</button>
         <button role="tab" id="tab-overview" aria-controls="overview" aria-selected="true" data-tab="overview">Overview</button>
         <button role="tab" id="tab-transit" aria-controls="transit" aria-selected="false" data-tab="transit">A to B timing</button>
         <button role="tab" id="tab-bags" aria-controls="bags" aria-selected="false" data-tab="bags">Bag history</button>
@@ -27,6 +41,65 @@
         <button role="tab" id="tab-reports" aria-controls="reports" aria-selected="false" data-tab="reports">Reports</button>
         <button role="tab" id="tab-hardware" aria-controls="hardware" aria-selected="false" data-tab="hardware">Belt control</button>
       </nav>
+      <!-- REAL DATA: MQTT telemetry and recorded incidents. No example sensor readings are inserted here. -->
+      <!-- SECTION DETAIL:
+        This section is filled exclusively from recorded monitoring API responses. It
+        brings connection state, measured readings, incident actions, health coverage and
+        camera access into one place. Empty containers are populated after the server
+        responds; there are no fallback sample measurements.
+      -->
+      <section id="live" role="tabpanel" aria-labelledby="tab-live" class="hidden">
+        <div class="panel">
+          <div class="row between">
+            <h2>Checkpoint &amp; belt monitor</h2>
+            <span id="mqttStatus" class="badge">Checking MQTT</span>
+          </div>
+          <p id="mqttDetail" class="muted">Waiting for monitoring server.</p>
+          <div id="liveReadings" class="cards"></div>
+          <p id="jamEvidence" class="notice">No current sensor evidence available.</p>
+          <div class="row">
+            <button data-live-camera="A">View checkpoint A</button>
+            <button data-live-camera="B">View checkpoint B</button>
+            <button id="liveExport">Export monitoring report</button>
+          </div>
+          <p id="liveCameraStatus" class="muted"></p>
+          <h3>Needs attention</h3>
+          <div id="liveAlerts" aria-live="polite"></div>
+          <h3 style="margin-top:20px">Rolling belt health</h3>
+          <div id="liveHealth"></div>
+          <div id="liveSpeedChart"></div>
+          <details class="settings">
+            <summary>Set belt-health limits</summary>
+            <!-- Input names intentionally match the SensorMonitor configuration keys in Python. -->
+            <!-- SECTION DETAIL:
+              Input names match the Python monitoring limit keys. Optional blank fields
+              disable extra evidence/reminders, while required fields define speed and
+              time rules. Browser input restrictions help entry, but the server still
+              validates the full candidate before accepting it.
+            -->
+            <form id="liveLimits" class="health-settings">
+              <label>Minimum speed (cm/s)<input name="speed_min_cm_s" type="number" min="0" step="0.1" required></label>
+              <label>Maximum speed (cm/s)<input name="speed_max_cm_s" type="number" min="0" step="0.1" required></label>
+              <label>Rolling window (seconds)<input name="window_seconds" type="number" min="1" max="86400" required></label>
+              <label>Allowed out-of-range time (seconds)<input name="outside_limit_seconds" type="number" min="0" required></label>
+              <label>Minimum running data (seconds)<input name="minimum_running_seconds" type="number" min="0" required></label>
+              <label>Telemetry stale after (seconds)<input name="stale_seconds" type="number" min="0.1" step="0.1" required></label>
+              <label>Stall speed threshold (cm/s)<input name="stall_speed_cm_s" type="number" min="0" step="0.1" required></label>
+              <label>Stall persistence (seconds)<input name="stall_seconds" type="number" min="0.1" step="0.1" required></label>
+              <label>High current threshold (A, optional)<input name="high_current_a" type="number" min="0" step="0.1"></label>
+              <label>Service runtime (hours, optional)<input name="service_runtime_hours" type="number" min="0" step="0.01"></label>
+              <label>Service distance (km, optional)<input name="service_distance_km" type="number" min="0" step="0.01"></label>
+              <button>Apply limits</button>
+            </form>
+            <p>Changes apply to this server session. Save calibrated values in your MQTT config for the next launch.</p>
+          </details>
+          <p id="liveMessage" role="status"></p>
+          <details class="settings">
+            <summary>Incident history</summary>
+            <div id="liveIncidentHistory" class="table-wrap"></div>
+          </details>
+        </div>
+      </section>
       <div class="banner">Overview, bag, motor and report views use <strong>demo data</strong>. A–B timing records your scans.</div>
       <div class="row between demo-heading">
         <div>
@@ -37,6 +110,13 @@
       </div>
       <div class="cards demo-heading" id="summary">
       </div>
+      <!-- REAL TIMING: Python stores departure/arrival records; this page just renders/polls them. -->
+      <!-- SECTION DETAIL:
+        The timing panel displays server-owned A-to-B journeys and their scan history.
+        Operators can set standards for new departures or run clearly labelled manual
+        tests. Existing trips retain their original limits, and browser refreshes do not
+        reset their clocks.
+      -->
       <section id="transit" role="tabpanel" aria-labelledby="tab-transit" class="hidden">
         <div class="panel">
           <div class="row between">
@@ -57,6 +137,13 @@
           </div>
           <details class="settings">
             <summary>Set acceptable travel time</summary>
+            <!-- New limits affect new journeys; each already-started journey keeps its original standard. -->
+            <!-- SECTION DETAIL:
+              The two numeric boundaries describe acceptable elapsed seconds for future
+              departures. They are submitted together so the server can reject an inverted
+              or invalid range. Saving this form does not retroactively rewrite the
+              standard captured by a bag already travelling.
+            -->
             <form id="transitStandard" class="row toolbar">
               <label>Minimum seconds <input id="transitMin" type="number" min="0" max="86399" step="0.1" value="0" required style="width:100px">
               </label>
@@ -67,6 +154,13 @@
           </details>
 <details class="settings">
             <summary>Manual scan test</summary>
+            <!-- Manual buttons test the same timer but always use the separate manual source namespace. -->
+            <!-- SECTION DETAIL:
+              Both buttons submit the same entered barcode but identify different
+              checkpoints. These actions exercise the real timer without a camera and are
+              stored as manual source. They cannot complete a separately tracked camera or
+              MQTT journey.
+            -->
             <form id="transitManual" class="row toolbar">
               <label for="transitBarcode">Manual test barcode</label>
               <input class="search" id="transitBarcode" maxlength="256" placeholder="e.g. JD|23.4|RED|GA2" required>
@@ -83,6 +177,13 @@
           </details>
         </div>
       </section>
+      <!-- DEMO: illustrations and example alerts, separate from live scanner previews. -->
+      <!-- SECTION DETAIL:
+        These cameras, alerts and summary records are illustrative demo content, useful
+        when hardware is unavailable. Local media previews also remain browser-only. The
+        separate Live monitor section is the place to inspect actual sensor readings and
+        scanner previews.
+      -->
       <section id="overview" role="tabpanel" aria-labelledby="tab-overview">
         <div class="grid">
           <div class="panel">
@@ -119,6 +220,13 @@
           </div>
         </div>
       </section>
+      <!-- DEMO bag catalogue. Actual recorded bag histories open from live incidents. -->
+      <!-- SECTION DETAIL:
+        This catalogue filters the illustrative bag records and opens their sample
+        timelines. Actual checkpoint records are stored by Python and opened through live
+        incident history actions instead. Keeping this distinction visible prevents
+        example observations from becoming operational evidence.
+      -->
       <section id="bags" role="tabpanel" aria-labelledby="tab-bags" class="hidden">
         <div class="panel">
           <div class="row between">
@@ -132,6 +240,13 @@
           </div>
         </div>
       </section>
+      <!-- DEMO motor cards/graphs; actual cm/s and current data appear on Live monitor. -->
+      <!-- SECTION DETAIL:
+        The example motor cards and speed graphs show how a broader installation could be
+        presented. Their RPM/current values come from the demo dataset rather than a
+        connected sensor. Actual testbed encoder measurements use cm/s and appear on Live
+        monitor.
+      -->
       <section id="motors" role="tabpanel" aria-labelledby="tab-motors" class="hidden">
         <div class="panel">
           <h2>Motor health</h2>
@@ -148,6 +263,13 @@
           <div class="notice">Possible jam = run requested + current above a calibrated threshold + encoder not moving for a sustained window. A stopped motor alone does not prove a jam. These demo flags are preconfigured examples, not calculated from live sensors.</div>
         </div>
       </section>
+      <!-- DEMO export. The live panel has a separate export containing recorded sensor/timing data. -->
+      <!-- SECTION DETAIL:
+        This report describes the current illustrative browser session and its example
+        incident log. It does not claim to be airport throughput or real sensor
+        statistics. Live monitor provides a separate export assembled from recorded
+        monitoring and timing responses.
+      -->
       <section id="reports" role="tabpanel" aria-labelledby="tab-reports" class="hidden">
         <div class="panel">
           <div class="row between">
@@ -164,6 +286,13 @@
           </div>
         </div>
       </section>
+      <!-- OPTIONAL CONTROL: separate explicit actions; viewing/polling monitoring never starts the belt. -->
+      <!-- SECTION DETAIL:
+        Physical actions are isolated from monitoring and remain disabled unless the
+        backend adapter is enabled. An explicit run request has a bounded duration and
+        separate permission checks. Status refreshes and alert acknowledgements do not
+        start the conveyor.
+      -->
       <section id="hardware" role="tabpanel" aria-labelledby="tab-hardware" class="hidden">
         <div class="panel" aria-labelledby="hardware-title">
           <div class="row between">
@@ -182,6 +311,13 @@
       </section>
       <footer>Monitoring only · Acknowledging an alert does not resolve it or restart equipment. Demo acknowledgements stay in this browser session.</footer>
     </main>
+    <!-- Shared modal: demo history or recorded journey history supplies its content when opened. -->
+    <!-- SECTION DETAIL:
+      The same modal surface can display an illustrative timeline or an explicitly
+      labelled recorded journey. Its title and content are replaced by the action that
+      opened it. Closing it only changes presentation and never deletes checkpoint or
+      incident history.
+    -->
     <dialog id="bagDialog">
       <div class="row between">
         <h2 id="bagTitle">
@@ -191,6 +327,12 @@
       <div id="bagHistory">
       </div>
     </dialog>
+    <!-- Demo/local-file preview modal; independent of the live JPEG preview modal below. -->
+    <!-- SECTION DETAIL:
+      This expanded view belongs to the illustrative camera/local-media controls. It is
+      deliberately separate from the scanner JPEG modal, which has availability and
+      freshness checks. Neither modal opens a second physical camera device.
+    -->
     <dialog id="cameraDialog" style="width:min(1100px,96vw)">
       <div class="row between">
         <h2>Camera preview</h2>
@@ -199,7 +341,30 @@
       <div id="largeCamera">
       </div>
     </dialog>
-    <script src="/team8dashboard.js" defer>
-    </script>
+    <!-- The scanner owns the camera. This modal receives recent JPEGs and clears stale ones. -->
+    <!-- SECTION DETAIL:
+      The scanner process owns camera acquisition and uploads recent preview frames. This
+      modal requests those JPEGs for the selected checkpoint, and old/missing frames are
+      cleared rather than left looking live. AB mode can intentionally show the same wide
+      image for both regions.
+    -->
+    <dialog id="liveCameraDialog" style="width:min(1000px,96vw)">
+      <div class="row between">
+        <h2 id="liveCameraTitle">Checkpoint camera</h2>
+        <button id="closeLiveCamera">Close</button>
+      </div>
+      <p id="livePreviewStatus" role="status">Checking preview.</p>
+      <img id="livePreview" alt="Current checkpoint camera preview" class="hidden" style="width:100%;max-height:60vh;object-fit:contain">
+      <p>Near-live preview from the scanner. One camera in AB mode supplies the same full view for both checkpoints.</p>
+    </dialog>
+    <!-- Load shared helpers/navigation first: team8live.js depends on them. Defer waits for the DOM. -->
+    <!-- SECTION DETAIL:
+      Deferred scripts run after the page elements exist. The shared script must execute
+      before the live script because it defines DOM lookup, escaping, navigation and
+      request helpers used there. No frontend build service or internet-hosted library is
+      required.
+    -->
+    <script src="/team8dashboard.js" defer></script>
+    <script src="/team8live.js" defer></script>
   </body>
 </html>

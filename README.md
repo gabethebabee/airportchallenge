@@ -2,6 +2,8 @@
 
 ## Start here
 
+**Live monitoring implemented:** start with `team8LIVE.md` for MQTT sensor input, persistent incidents, camera previews and rolling belt-health flags. The dashboard now opens on Live monitor. `python team8package.py` creates `team8jetson.zip` for USB deployment, excluding private runtime databases and credentials. MQTT remains optional and read-only; the generated sensor flow still needs local commissioning.
+
 **Barcode timing:** open the new **A to B timing** tab for persistent travel-time measurements and configurable limits. `team8barcode_scanner.py` connects camera A/B or distinct organizer MQTT topics. See `team8TIMING.md` for setup and manual testing. This feature is independent of the synthetic overview and optional conveyor controls.
 
 **Organizer ZIP reviewed:** see `team8CONTROL.md` for the revised single-testbed scope and optional conveyor-control setup. Run/stop is isolated in `team8conveyor_control.py`, disabled by default. The importable `team8conveyor_flow.json` is generated from the supplied Node-RED flows; it has not been deployed. The rest of the dashboard still uses synthetic data.

@@ -1,0 +1,209 @@
+[
+  {
+    "id": "team8-sensor-tab",
+    "type": "tab",
+    "label": "Team8 read-only MQTT sensors",
+    "disabled": true,
+    "info": "Encoder channel 0 and analog output channel 7 readback. No writes. Verify channel 7 readback and input polling in the lab. Current is unknown."
+  },
+  {
+    "id": "team8-sensor-device",
+    "type": "groov-io-device",
+    "address": "localhost",
+    "msgQueueFullBehavior": "DROP_OLD"
+  },
+  {
+    "id": "team8-sensor-broker",
+    "type": "mqtt-broker",
+    "name": "",
+    "broker": "129.97.228.106",
+    "port": "1883",
+    "clientid": "team8-sensor-exporter",
+    "autoConnect": true,
+    "usetls": false,
+    "compatmode": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "true",
+    "birthPayload": "ONLINE",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "true",
+    "closePayload": "OFFLINE",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "true",
+    "willPayload": "DISCONNECTED",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "team8-sensor-encoder",
+    "type": "groov-io-input",
+    "z": "team8-sensor-tab",
+    "device": "team8-sensor-device",
+    "dataType": "channel-digital-feature-value",
+    "moduleIndex": "",
+    "channelIndex": "0",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "sendInitialValue": true,
+    "deadband": "0",
+    "scanTimeSec": "1.0",
+    "name": "Encoder counter (organizer channel 0)",
+    "x": 200,
+    "y": 100,
+    "wires": [
+      [
+        "team8-sensor-speed"
+      ]
+    ]
+  },
+  {
+    "id": "team8-sensor-speed",
+    "type": "function",
+    "z": "team8-sensor-tab",
+    "name": "Counter delta to linear speed (cm/s)",
+    "x": 590,
+    "y": 100,
+    "wires": [
+      []
+    ],
+    "outputs": 1,
+    "initialize": "/* TEAM8 DETAIL:\n * This runs when the node is initialized or redeployed, before incoming messages are\n * processed. Cached timestamps, counters or permission flags start from an explicit\n * baseline so old context cannot masquerade as newly observed state.\n */\n// TEAM8 NOTE: Initialize node-local timing/state for Counter delta to linear speed (cm/s).\nflow.set(\"encoderPrevious\",null);flow.set(\"encoderAt\",0);flow.set(\"encoderSpeed\",null);",
+    "func": "/* TEAM8 DETAIL:\n * Fresh encoder counts are converted into linear belt speed using 700 counts per\n * revolution, a factor-four pulley ratio and a 10.5 cm pulley diameter. The first\n * reading establishes a baseline; invalid, reset or widely separated counts cannot\n * supply a trustworthy speed.\n */\n// TEAM8 NOTE: Counter delta to linear speed (cm/s); msg is the incoming message and returned messages follow the configured wires.\nif (msg.payload===null || msg.payload===undefined || typeof msg.payload===\"boolean\" || msg.payload===\"\") return null;\nconst now=Date.now(), count=Number(msg.payload), prev=flow.get(\"encoderPrevious\");\nif (!Number.isFinite(count)) return null;\nlet speed=null;\nif (prev && now>prev.at && now-prev.at<=3000 && count>=prev.count) {\n    speed=(count-prev.count)/(700*4)*(10.5*3.14)/((now-prev.at)/1000);\n}\nflow.set(\"encoderPrevious\",{count,at:now});\nflow.set(\"encoderAt\",now);flow.set(\"encoderSpeed\",speed);return null;"
+  },
+  {
+    "id": "team8-sensor-output",
+    "type": "groov-io-input",
+    "z": "team8-sensor-tab",
+    "device": "team8-sensor-device",
+    "dataType": "channel-analog",
+    "moduleIndex": "",
+    "channelIndex": "7",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "sendInitialValue": true,
+    "deadband": "0",
+    "scanTimeSec": "1.0",
+    "name": "Channel 7 output readback (verify locally)",
+    "x": 200,
+    "y": 200,
+    "wires": [
+      [
+        "team8-sensor-run"
+      ]
+    ]
+  },
+  {
+    "id": "team8-sensor-run",
+    "type": "function",
+    "z": "team8-sensor-tab",
+    "name": "Output voltage indicates run requested, not motion",
+    "x": 610,
+    "y": 200,
+    "wires": [
+      []
+    ],
+    "outputs": 1,
+    "initialize": "/* TEAM8 DETAIL:\n * This runs when the node is initialized or redeployed, before incoming messages are\n * processed. Cached timestamps, counters or permission flags start from an explicit\n * baseline so old context cannot masquerade as newly observed state.\n */\n// TEAM8 NOTE: Initialize node-local timing/state for Output voltage indicates run requested, not motion.\nflow.set(\"outputAt\",0);flow.set(\"outputVoltage\",null);",
+    "func": "/* TEAM8 DETAIL:\n * This reads the configured analog output channel without writing it. Its timestamp\n * and voltage are cached for the publisher, which uses positive voltage as run-request\n * evidence. Output readback must be verified locally and is not a measurement of\n * current or motion.\n */\n// TEAM8 NOTE: Output voltage indicates run requested, not motion; msg is the incoming message and returned messages follow the configured wires.\nif (msg.payload===null || msg.payload===undefined || typeof msg.payload===\"boolean\" || msg.payload===\"\") return null;\nconst voltage=Number(msg.payload);\nif (!Number.isFinite(voltage) || voltage<0) return null;\nflow.set(\"outputAt\",Date.now());flow.set(\"outputVoltage\",voltage);return null;"
+  },
+  {
+    "id": "team8-sensor-tick",
+    "type": "inject",
+    "z": "team8-sensor-tab",
+    "name": "Publish once per second",
+    "x": 180,
+    "y": 340,
+    "wires": [
+      [
+        "team8-sensor-payload"
+      ]
+    ],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "1",
+    "once": true,
+    "onceDelay": 1,
+    "crontab": ""
+  },
+  {
+    "id": "team8-sensor-payload",
+    "type": "function",
+    "z": "team8-sensor-tab",
+    "name": "Build explicit telemetry with unknowns",
+    "x": 550,
+    "y": 340,
+    "wires": [
+      [
+        "team8-sensor-publish"
+      ]
+    ],
+    "outputs": 1,
+    "initialize": "/* TEAM8 DETAIL:\n * This runs when the node is initialized or redeployed, before incoming messages are\n * processed. Cached timestamps, counters or permission flags start from an explicit\n * baseline so old context cannot masquerade as newly observed state.\n */\n// TEAM8 NOTE: Initialize node-local timing/state for Build explicit telemetry with unknowns.\nflow.set(\"sensorSession\",Date.now().toString(36)+Math.random().toString(36).slice(2));flow.set(\"sensorSequence\",0);",
+    "func": "/* TEAM8 DETAIL:\n * The periodic tick packages fresh cached measurements with a session ID and\n * increasing sequence number. Old underlying input values become null even if the MQTT\n * publisher is still connected. Current remains null until an actual calibrated sensor\n * is integrated.\n */\n// TEAM8 NOTE: Build explicit telemetry with unknowns; msg is the incoming message and returned messages follow the configured wires.\nconst now=Date.now();\nconst session=flow.get(\"sensorSession\");\nconst seq=(flow.get(\"sensorSequence\")||0)+1;flow.set(\"sensorSequence\",seq);\nconst encoderFresh=now-(flow.get(\"encoderAt\")||0)<=3000;\nconst outputFresh=now-(flow.get(\"outputAt\")||0)<=3000;\nconst voltage=flow.get(\"outputVoltage\");\nmsg.payload=JSON.stringify({\n    station_id:\"Conveyor3\",event_id:session+\":\"+seq,session_id:session,sequence:seq,\n    speed_cm_s:encoderFresh ? flow.get(\"encoderSpeed\") : null,\n    run_requested:outputFresh && typeof voltage===\"number\" ? voltage>0.1 : null,\n    current_a:null\n});\nmsg.retain=false;return msg;"
+  },
+  {
+    "id": "team8-sensor-publish",
+    "type": "mqtt out",
+    "z": "team8-sensor-tab",
+    "name": "Team8 telemetry (non-retained)",
+    "x": 920,
+    "y": 340,
+    "wires": [
+      []
+    ],
+    "topic": "team8/Conveyor3/telemetry",
+    "qos": "0",
+    "retain": "false",
+    "broker": "team8-sensor-broker"
+  },
+  {
+    "id": "team8-sensor-errors",
+    "type": "catch",
+    "z": "team8-sensor-tab",
+    "name": "Sensor input errors invalidate cached readings",
+    "x": 230,
+    "y": 440,
+    "wires": [
+      [
+        "team8-sensor-invalidate"
+      ]
+    ],
+    "scope": [
+      "team8-sensor-encoder",
+      "team8-sensor-output"
+    ],
+    "uncaught": false
+  },
+  {
+    "id": "team8-sensor-invalidate",
+    "type": "function",
+    "z": "team8-sensor-tab",
+    "name": "Mark both readings unknown after input errors",
+    "x": 650,
+    "y": 440,
+    "wires": [
+      []
+    ],
+    "outputs": 1,
+    "func": "/* TEAM8 DETAIL:\n * A Groov input error makes the cached encoder and output observations unusable. Their\n * timestamps and counter baseline are reset so the next publisher tick sends unknowns\n * instead of repeatedly reporting the old values as current.\n */\n// TEAM8 NOTE: Mark both readings unknown after input errors; msg is the incoming message and returned messages follow the configured wires.\nflow.set(\"encoderAt\",0);flow.set(\"encoderPrevious\",null);flow.set(\"outputAt\",0);return null;"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "broker": "129.97.228.106",
+  "port": 1883,
+  "station_id": "Conveyor3",
+  "sensor_topic": "team8/Conveyor3/telemetry",
+  "checkpoint_topics": {
+    "A": "Conveyor3/barcode_value",
+    "B": null
+  },
+  "limits": {
+    "speed_min_cm_s": 5.0,
+    "speed_max_cm_s": 30.0,
+    "window_seconds": 3600.0,
+    "outside_limit_seconds": 1440.0,
+    "minimum_running_seconds": 60.0,
+    "stale_seconds": 4.0,
+    "stall_speed_cm_s": 0.5,
+    "stall_seconds": 3.0,
+    "high_current_a": null,
+    "service_runtime_hours": null,
+    "service_distance_km": null
+  }
+}

@@ -7,7 +7,17 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 
+# Optional adapter for the separate PLC control bridge; monitoring does not depend on enabling
+# it.
+# This adapter exists only for explicitly enabled physical-control requests. Monitoring can run
+# with it disabled, and its token/base URL remain in Python rather than being embedded into
+# downloadable browser code.
 class ConveyorControl:
+    # Validate connection settings only when control is explicitly enabled; never store the
+    # token in the page.
+    # The enabled flag defaults off. If enabled, the URL shape and minimum token length are
+    # checked before any request is permitted; merely constructing the disabled adapter does not
+    # contact the PLC.
     def __init__(self, enabled=False):
         self.enabled = enabled
         self.base = os.environ.get('TEAM8_PLC_URL', '').rstrip('/')
@@ -20,6 +30,11 @@ class ConveyorControl:
             if len(self.token) < 24:
                 raise ValueError('TEAM8_CONTROL_TOKEN must have at least 24 characters; also set it in Node-RED')
 
+    # Allow only status/run/stop and never retry a physical command whose outcome may be
+    # uncertain.
+    # Only status, run and stop are accepted. The authenticated HTTP request goes to the
+    # separate Node-RED bridge; known rejections are distinguishable from timeouts, where a
+    # physical command may already have executed and must not be retried automatically.
     def request(self, action):
         if action not in ('status', 'run', 'stop'):
             raise ValueError('Unknown conveyor action')
@@ -44,5 +59,5 @@ class ConveyorControl:
             return {'enabled': True, **result}
 
 
-# Comment this line out (or keep the default False) to remove all hardware access.
+# Keep False to disable hardware access, or comment out the optional dashboard import.
 ENABLE_CONVEYOR_CONTROL = False

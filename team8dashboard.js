@@ -1,7 +1,54 @@
 'use strict';
+
+// Compatibility helpers for the older browser commonly installed on Jetson images.
+// Request local API data with a timeout; use the older-browser path when AbortController is unavailable.
+/* SECTION DETAIL:
+ * Callers provide a local URL and ordinary fetch options. The helper adds a
+ * five-second abort when supported and clears its timer on either success or
+ * failure. It returns the response for the feature code to decode, preserving
+ * compatibility with the older Jetson browser.
+ */
+function team8Fetch(url, options = {}) {
+  if (typeof AbortController === 'undefined') return fetch(url, options);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  return fetch(url, Object.assign({}, options, {signal: controller.signal}))
+    .then(response => { clearTimeout(timeout); return response; },
+          error => { clearTimeout(timeout); throw error; });
+}
+
+// Give a manual scan a unique delivery ID so a retried request can be identified as the same event.
+/* SECTION DETAIL:
+ * Each manual submission needs a delivery identity independent of its barcode.
+ * This uses browser randomness when available, with a timestamp/random
+ * fallback for older browsers. The backend can reject a repeated delivery
+ * without confusing it with a genuinely new journey.
+ */
+function team8EventID() {
+  const random = new Uint32Array(4);
+  if (window.crypto && window.crypto.getRandomValues) {
+    window.crypto.getRandomValues(random);
+    return Array.from(random, value => value.toString(16)).join('-');
+  }
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
 // Integration seam: replace makeDemo() with validated sensor/backend data.
 // Demo views use synthetic records. Real timing and optional controls use separate APIs.
+// Short DOM lookup helper: $("name") finds the element whose id is name.
+/* SECTION DETAIL:
+ * Most UI handlers need to find a named page element. This shorthand performs a normal
+ * document lookup, keeping rendering code shorter while still using the HTML id as the
+ * shared connection between page structure and behavior.
+ */
 const $=id=>document.getElementById(id);
+// Escape untrusted labels before putting them inside HTML templates.
+/* SECTION DETAIL:
+ * Barcodes, locations and API messages are data, not HTML instructions. Escaping
+ * special characters before template insertion prevents those values from being
+ * interpreted as markup. Static templates remain separate from the dynamic text they
+ * contain.
+ */
 const esc=s=>String(s).replace(/[&<>"']/g,
 c=>( {
   '&':'&amp;',
@@ -12,6 +59,13 @@ c=>( {
 }
 [c]));
 // 1. EXAMPLE DATA — used only by the demo views.
+// Return illustrative records only. These values must never be mistaken for the live monitor input.
+/* SECTION DETAIL:
+ * These records make the illustrative pages usable without hardware. They
+ * include camera names, bag timelines, motor readings and example alerts;
+ * changing them only changes the demo views. The live monitor and recorded
+ * timing use separate server APIs.
+ */
 function makeDemo() {
   return  {
     cameras:[ {
@@ -262,11 +316,23 @@ function makeDemo() {
     ]
   };
 }
+/* SECTION DETAIL:
+ * The initial application state chooses a demo camera and the real monitoring landing
+ * page. These browser variables describe presentation only; changing them does not
+ * change PLC output or erase the persistent timing/sensor records.
+ */
 let data=makeDemo(),
 selectedCamera='CAM-02',
-activeTab='transit';
+activeTab='live';
 const media=new Map();
 // 2. DEMO VIEW RENDERING — camera illustrations, histories and charts.
+// Choose a visual status style while keeping the status text visible for readers who cannot distinguish colours.
+/* SECTION DETAIL:
+ * Status text determines a readable colour/background pair. The text remains
+ * visible so colour perception is not required to understand the result.
+ * Returning a small HTML fragment lets several demo views share consistent
+ * labels.
+ */
 function badge(text) {
   let cls=['Stuck',
   'Stalled'].includes(text)?'bad':['Missing',
@@ -275,12 +341,19 @@ function badge(text) {
   'Delivered'].includes(text)?'good':'';
   return `<span class="badge ${cls}">${esc(text)}</span>`;
 }
+// Show the selected panel, update accessible tab state, and hide unrelated demo headings.
+/* SECTION DETAIL:
+ * The selected name matches a panel id and a data-tab attribute. Other panels
+ * are hidden, accessible selection/tab order is updated, and demo headings are
+ * suppressed on real monitoring pages. Switching views does not start or reset
+ * any backend measurement.
+ */
 function tab(name) {
   activeTab=name;
   document.querySelectorAll('.demo-heading').forEach(el=>el.classList.toggle('hidden',
   name!=='overview'));
   document.querySelector('.banner').classList.toggle('hidden',
-  name==='transit'||name==='hardware');
+  name==='live'||name==='transit'||name==='hardware');
   for(const b of document.querySelectorAll('[data-tab]')) {
     const selected=b.dataset.tab===name;
     b.setAttribute('aria-selected',
@@ -290,6 +363,13 @@ function tab(name) {
     !selected);
   }
 }
+// Build a demo illustration or local media preview; this is separate from actual scanner JPEGs in team8live.js.
+/* SECTION DETAIL:
+ * A selected demo camera either displays a user-chosen local file or a
+ * generated conveyor illustration. This function returns markup rather than
+ * opening a device. The real scanner preview has its own authenticated image
+ * route and freshness checks.
+ */
 function cameraMarkup(id) {
   const c=data.cameras.find(c=>c.id===id),
   m=media.get(id);
@@ -325,11 +405,25 @@ function cameraMarkup(id) {
 <span class="muted">${esc(c.belt)}</span>
 </div>`;
 }
+// Refresh the selected demo camera and selector buttons, including its expanded view if open.
+/* SECTION DETAIL:
+ * The current camera id chooses both the main preview and active selector
+ * styling. If its enlarged modal is open, that view is refreshed too.
+ * Rebuilding this markup affects presentation only and does not identify bags
+ * or command the belt.
+ */
 function renderCamera() {
   $('camera').innerHTML=cameraMarkup(selectedCamera);
   $('cameraButtons').innerHTML=data.cameras.map(c=>`<button aria-pressed="${c.id===selectedCamera}" data-camera="${c.id}">${esc(c.id)} · ${esc(c.name)}</button>`).join('');
   if($('cameraDialog').open)$('largeCamera').innerHTML=cameraMarkup(selectedCamera);
 }
+// Create the illustrative bag table; escape text before inserting it into HTML.
+/* SECTION DETAIL:
+ * The input is a list of illustrative bag objects. Each row shows status, last
+ * location and an action to open its sample history; dynamic text is escaped
+ * before insertion. Narrow-screen labels are attached later by the shared
+ * table accessibility helper.
+ */
 function bagTable(bags) {
   return `<table>
 <thead>
@@ -347,18 +441,32 @@ function bagTable(bags) {
 </td>
 <td>${badge(b.status)}</td>
 <td>${esc(b.location)}</td>
-<td>${esc(b.events.at(-1)[0])} (demo)</td>
+<td>${esc(b.events[b.events.length-1][0])} (demo)</td>
 <td>
 <button data-bag="${b.id}">View timeline</button>
 </td>
 </tr>`).join('')||'<tr><td colspan="5">No matching bags.</td></tr>'}</tbody>
 </table>`;
 }
+// Filter demo bags by ID/location and rebuild the demo list; real bag timelines use the live API.
+/* SECTION DETAIL:
+ * The search field is compared to demo bag ids and locations without changing
+ * the underlying records. Matching rows and the short activity list are
+ * rebuilt. This is separate from real recorded journey timelines opened from
+ * live incidents.
+ */
 function renderBags() {
   const q=$('bagSearch').value.toLowerCase();
   $('bagTable').innerHTML=bagTable(data.bags.filter(b=>(b.id+' '+b.location).toLowerCase().includes(q)));
   $('recent').innerHTML=`<div class="table-wrap">${bagTable(data.bags.slice(0,3))}</div>`;
 }
+// Draw a simple SVG graph from demo values; horizontal dashed lines show the supplied limits.
+/* SECTION DETAIL:
+ * A supplied sample series is mapped into an SVG coordinate system. Configured
+ * thresholds become horizontal dashed lines so the reader can compare values
+ * visually. The resulting graph is a demo presentation, not evidence of
+ * current sensor behavior.
+ */
 function chart(values,
 min,
 max,
@@ -375,6 +483,13 @@ unit) {
 <text x="660" y="204">Latest</text>
 </svg>`;
 }
+// Present the selected demo motor and its sample graphs; the percentage is within-time divided by running-time.
+/* SECTION DETAIL:
+ * The selected illustrative motor supplies speed, current, running-time totals
+ * and sample histories. The displayed percentage comes from within-range
+ * seconds divided by running seconds. Actual encoder cm/s and measured current
+ * belong to the live panel instead.
+ */
 function renderMotor() {
   const m=data.motors.find(m=>m.id===$('motorSelect').value),
   pct=Math.round(100*m.within/m.total);
@@ -399,6 +514,13 @@ function renderMotor() {
 </span>Demo readings · Dashed amber lines = configured limits</p>
 <p>Run requested: <strong>${m.run?'Yes':'No'}</strong> · Encoder moving: <strong>${m.encoder?'Yes':'No'}</strong> · ${m.status==='Stopped'?'Intentional stop; excluded from running-time denominator.':m.status==='Stalled'?'Possible jam; operator inspection required.':'Within current speed range.'}</p>`;
 }
+// Refresh all illustrative summary/alert/report views from the current demo state, not from MQTT.
+/* SECTION DETAIL:
+ * This rebuilds demo totals, alerts, tables and reports after a demo
+ * interaction. Acknowledging one of these sample alerts changes only its local
+ * demo object. Persistent real incidents are maintained by Python and rendered
+ * by team8live.js.
+ */
 function render() {
   const outstanding=data.alerts.filter(a=>!a.ack).length;
   $('summary').innerHTML=[['Bags tracked',
@@ -474,6 +596,13 @@ function render() {
 </tr>`).join('')}</tbody>
 </table>`;
 }
+// Open an illustrative bag timeline; the live incident handler builds recorded journey timelines separately.
+/* SECTION DETAIL:
+ * A demo bag id selects its example event chain and last-confirmed camera
+ * action. The shared modal displays that content until closed. The live
+ * incident handler can reuse the modal, but fills it with recorded server
+ * history and an explicit recorded-journey label.
+ */
 function openBag(id) {
   const b=data.bags.find(b=>b.id===id);
   $('bagTitle').textContent=b.id+' · History';
@@ -487,6 +616,13 @@ function openBag(id) {
   if(!$('bagDialog').open)$('bagDialog').showModal();
 }
 // 3. DEMO BUTTONS AND NAVIGATION
+// One delegated click handler serves buttons created later when a view is redrawn.
+/* SECTION DETAIL:
+ * Buttons inside rendered tables may not exist when the page first loads.
+ * Listening at document level lets new buttons participate without registering
+ * handlers after every redraw. Data attributes identify the requested feature
+ * and its record.
+ */
 document.addEventListener('click',
 e=> {
   const b=e.target.closest('button');
@@ -514,6 +650,12 @@ e=> {
     renderMotor();
   }
 });
+// Arrow/Home/End keys move between tabs without requiring a mouse or touchscreen.
+/* SECTION DETAIL:
+ * Keyboard users can navigate the same views as touch users. Arrow keys cycle
+ * the available tabs and Home/End select the edges; focus follows selection so
+ * the highlighted control and displayed panel remain consistent.
+ */
 document.querySelector('.tabs').addEventListener('keydown',
 e=> {
   if(!['ArrowRight',
@@ -528,6 +670,7 @@ e=> {
   tab(items[i].dataset.tab);
   items[i].focus();
 });
+// Connect the demo controls to their render functions after all page elements exist.
 $('motorSelect').innerHTML=data.motors.map(m=>`<option value="${m.id}">${m.id} · ${m.belt}</option>`).join('');
 $('motorSelect').value='M-02';
 $('motorSelect').onchange=renderMotor;
@@ -541,6 +684,13 @@ $('closeCamera').onclick=()=> {
   $('cameraDialog').close();
   $('largeCamera').innerHTML='';
 };
+// Local files are shown by browser-only object URLs; no media is uploaded by this demo control.
+/* SECTION DETAIL:
+ * This is an illustrative media-preview control rather than the scanner feed.
+ * A browser object URL displays the selected file locally and the old URL is
+ * released when replaced. No camera detection, upload or motor action is
+ * triggered here.
+ */
 $('cameraFile').onchange=e=> {
   const f=e.target.files[0];
   if(!f)return;
@@ -558,6 +708,13 @@ $('cameraFile').onchange=e=> {
   renderCamera();
   e.target.value='';
 };
+// Reset only the demo state; this does not erase real scan records, sensor history, or PLC state.
+/* SECTION DETAIL:
+ * Only illustrative state and local media previews are restored to their
+ * original examples. Real SQLite history and PLC outputs are deliberately
+ * outside this action, so testing the demo cannot erase or reset live
+ * operation.
+ */
 $('reset').onclick=()=> {
   data=makeDemo();
   for(const m of media.values())URL.revokeObjectURL(m.url);
@@ -566,6 +723,13 @@ $('reset').onclick=()=> {
   $('bagSearch').value='';
   render();
 };
+// Export the illustrative session. The Live monitor has its own separate real-data export.
+/* SECTION DETAIL:
+ * The current illustrative objects are serialized into a downloaded JSON
+ * report. This export is explicitly separate from the live monitoring report;
+ * keeping them separate prevents example sensor values from being represented
+ * as measurements.
+ */
 $('export').onclick=()=> {
   const report= {
     source:'synthetic',
@@ -590,12 +754,19 @@ setInterval(()=> {
   $('clock').textContent=new Date().toLocaleTimeString();
 },
 1000);
-tab('transit');
+tab('live');
 render();
 // 4. OPTIONAL PHYSICAL CONVEYOR CONTROLS
 // Optional controls: deleting this block leaves the demo dashboard functional.
 let controlBusy=false,
 controlToken='';
+// Call the optional hardware bridge once. A timeout leaves outcome unknown, so Run is never automatically retried.
+/* SECTION DETAIL:
+ * Status and operator-requested actions go to the optional local control
+ * adapter with a browser session token. Buttons are temporarily disabled while
+ * a request is in flight. A rejected or timed-out command must not be mistaken
+ * for confirmed physical movement or automatically retried.
+ */
 async function controlRequest(action) {
   if(controlBusy)return;
   controlBusy=true;
@@ -603,14 +774,14 @@ async function controlRequest(action) {
   $('controlStop').disabled=true;
   try {
     if(!controlToken) {
-      const session=await fetch('/api/conveyor/session',
+      const session=await team8Fetch('/api/conveyor/session',
       {
         cache:'no-store'
       });
       if(!session.ok)throw Error('Cannot obtain local control session');
       controlToken=(await session.json()).token;
     }
-    const r=await fetch('/api/conveyor',
+    const r=await team8Fetch('/api/conveyor',
     {
       method:'POST',
       headers: {
@@ -621,7 +792,7 @@ async function controlRequest(action) {
         action
       }
       ),
-      signal:AbortSignal.timeout(5000)
+
     });
     const s=await r.json();
     if(!r.ok)throw Error(s.message||'PLC request failed');
@@ -642,6 +813,13 @@ async function controlRequest(action) {
     controlBusy=false;
   }
 }
+// Run requires an explicit operator click/confirmation; periodic refreshes request status only.
+/* SECTION DETAIL:
+ * A physical run requires an explicit operator confirmation and goes through
+ * the separately enabled backend adapter. Merely opening the control tab or
+ * refreshing status does not request movement. Server-side and PLC-side checks
+ * still determine whether a request is permitted.
+ */
 $('controlRun').onclick=()=> {
   if(confirm('Request a 3-second run on the physical conveyor? Confirm the belt is clear and you are at the assigned testbed.'))controlRequest('run');
 };
@@ -649,17 +827,29 @@ $('controlStop').onclick=()=>controlRequest('stop');
 $('controlRefresh').onclick=()=>controlRequest('status');
 controlRequest('status');
 // 5. REAL BARCODE TIMING — poll the Python server once per second.
+/* SECTION DETAIL:
+ * These flags prevent overlapping timing polls and preserve edits to the settings form
+ * after its first initialization. The browser has no independent journey clock; it
+ * presents values owned by the Python tracker.
+ */
 let transitBusy=false,
 transitInitialized=false;
 const localTime=t=>t==null?'Not seen':new Date(t*1000).toLocaleTimeString();
+// Read/update the real timing API; manual changes include a local browser session token.
+/* SECTION DETAIL:
+ * A missing body means read current timing state; a supplied body submits a
+ * manual scan or limit update. Mutations include the local session token.
+ * Backend validation remains authoritative even if the browser input fields
+ * already restrict the values.
+ */
 async function transitRequest(path,
 body) {
   if(body&&!controlToken) {
-    const r=await fetch('/api/conveyor/session');
+    const r=await team8Fetch('/api/conveyor/session');
     if(!r.ok)throw Error('Session unavailable');
     controlToken=(await r.json()).token;
   }
-  const r=await fetch('/api/transit'+path,
+  const r=await team8Fetch('/api/transit'+path,
   {
     method:body?'POST':'GET',
     cache:'no-store',
@@ -670,12 +860,19 @@ body) {
     : {
     },
     body:body?JSON.stringify(body):undefined,
-    signal:AbortSignal.timeout(5000)
+
   });
   const s=await r.json();
   if(!r.ok)throw Error(s.message||'Timing request failed');
   return s;
 }
+// Poll recorded journeys and show server-calculated classifications; browser polling does not own the timer.
+/* SECTION DETAIL:
+ * The server supplies journeys, scans and each departure standard. This
+ * formats them into summaries and rows, initializes settings only once, and
+ * reports connection loss explicitly. The Python clock/supervisor keeps
+ * running independently of how often this view is polled.
+ */
 async function refreshTransit() {
   if(transitBusy)return;
   transitBusy=true;
@@ -758,6 +955,12 @@ async function refreshTransit() {
     transitBusy=false;
   }
 }
+// Send both limits together; the backend validates them and applies them only to new journeys.
+/* SECTION DETAIL:
+ * The form sends both acceptable-time boundaries together and reports the
+ * backend response. Only future departures use the updated standard,
+ * preserving the meaning of journeys already measured or still travelling.
+ */
 $('transitStandard').onsubmit=async e=> {
   e.preventDefault();
   try {
@@ -773,9 +976,16 @@ $('transitStandard').onsubmit=async e=> {
     $('transitMessage').textContent=err.message;
   }
 };
+// Manual scans exercise timing without a camera and remain labelled manual in storage.
+/* SECTION DETAIL:
+ * The clicked submit button identifies A versus B. The barcode is sent with a
+ * new event ID and manual source so these tests exercise the timer without
+ * finishing a real camera/MQTT journey. Updated results are requested after
+ * the server accepts the event.
+ */
 $('transitManual').onsubmit=async e=> {
   e.preventDefault();
-  const checkpoint=e.submitter?.value;
+  const checkpoint=(e.submitter || document.activeElement).value;
   if(!['A',
   'B'].includes(checkpoint))return;
   try {
@@ -784,7 +994,7 @@ $('transitManual').onsubmit=async e=> {
       barcode:$('transitBarcode').value,
       checkpoint,
       source:'manual',
-      event_id:crypto.randomUUID()
+      event_id:team8EventID()
     });
     $('transitMessage').textContent=s.message;
     await refreshTransit();
@@ -800,6 +1010,13 @@ setInterval(()=> {
 1000);
 // Give every compact table field its column label. These labels are also visible
 // when tables turn into cards on the Jetson screen. Only child changes are watched.
+// Copy column headings onto fields so narrow-screen card layouts remain understandable.
+/* SECTION DETAIL:
+ * On small screens, table rows become cards and would otherwise lose the
+ * meaning supplied by their column headings. This copies each heading into a
+ * cell data attribute used by CSS. The observer watches child changes only so
+ * adding attributes does not trigger an endless update loop.
+ */
 function labelTableFields()  {
   document.querySelectorAll('table').forEach(table =>  {
     const labels = Array.from(table.querySelectorAll('thead th'),
