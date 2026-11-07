@@ -2,6 +2,8 @@
 
 ## Start here
 
+**Organizer ZIP reviewed:** see `team8CONTROL.md` for the revised single-testbed scope and optional conveyor-control setup. Run/stop is isolated in `team8conveyor_control.py`, disabled by default. The importable `team8conveyor_flow.json` is generated from the supplied Node-RED flows; it has not been deployed. The rest of the dashboard still uses synthetic data.
+
 Detect a bag that has stopped unexpectedly, identify its monitored zone, and show an actionable alert with a camera view or last observed image.
 
 `team8dashboard.py` now serves a working dashboard prototype with clearly labelled synthetic data. Run `python team8dashboard.py` and open http://127.0.0.1:8080. See `team8DASHBOARD.md` for features, limitations, and integration guidance. No live hardware integration has been verified in this checkout.

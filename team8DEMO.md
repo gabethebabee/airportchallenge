@@ -1,5 +1,11 @@
 # Demo and acceptance checklist
 
+## Physical-control addition
+
+An optional disabled-by-default bridge is available; see `team8CONTROL.md`. Before demonstrating hardware, commission the assigned Node-RED flow and verify stop, route rejection, expired route permission, and the bounded run pulse locally. These hardware checks have not been performed. Offline tests: `python -B -m unittest team8test_control` and `node team8test_flow.js`.
+
+The organizer ZIP explicitly requires AI disclosure using https://aidframework.org/. The disclosure should include AI assistance with dashboard code, control bridge, generated flow, planning, documentation, and offline tests; the team should add its own verification results and other AI use.
+
 ## Test before presenting
 
 Proposed checks; these have not been executed against an implementation. Record actual results instead of marking them complete by assumption.

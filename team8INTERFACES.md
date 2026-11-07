@@ -1,5 +1,7 @@
 # Proposed integration contract — version 1
 
+**Source verification update:** `team8CONTROL.md` documents the optional physical-control API and the imported organizer output mappings. The observation contract below remains a proposal for the detector and is not consumed by the current dashboard. The new control panel is independent; it does not publish fabricated routing messages on the scanner topics.
+
 This contract is a team proposal. The organizer's barcode payload is separate and does not contain movement, belt state, or timestamps.
 
 ## Existing organizer integration (from supplied tutorial)

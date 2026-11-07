@@ -1,0 +1,273 @@
+[
+  {
+    "id": "team8-control-tab",
+    "type": "tab",
+    "label": "Team8 conveyor control",
+    "disabled": true,
+    "info": "Derived from organizer flows.json and Basic Motion and Divert.json. See team8CONTROL.md before enabling."
+  },
+  {
+    "id": "team8-groov-device",
+    "type": "groov-io-device",
+    "address": "localhost",
+    "msgQueueFullBehavior": "DROP_OLD"
+  },
+  {
+    "id": "team8-mqtt-broker",
+    "type": "mqtt-broker",
+    "name": "",
+    "broker": "129.97.228.106",
+    "port": "1883",
+    "clientid": "team8-conveyor-bridge",
+    "autoConnect": true,
+    "usetls": false,
+    "compatmode": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "true",
+    "birthPayload": "ONLINE",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "true",
+    "closePayload": "OFFLINE",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "true",
+    "willPayload": "DISCONNECTED",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "team8-write-speed",
+    "type": "groov-io-write",
+    "z": "team8-control-tab",
+    "device": "team8-groov-device",
+    "dataType": "channel-analog",
+    "moduleIndex": "",
+    "channelIndex": "7",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "value": "",
+    "valueType": "msg.payload",
+    "name": "Belt output (channel 7)",
+    "x": 1050,
+    "y": 200,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "team8-write-direction",
+    "type": "groov-io-write",
+    "z": "team8-control-tab",
+    "device": "team8-groov-device",
+    "dataType": "channel-analog",
+    "moduleIndex": "",
+    "channelIndex": "6",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "value": "0",
+    "valueType": "value",
+    "name": "Fixed organizer direction (channel 6)",
+    "x": 1050,
+    "y": 140,
+    "wires": [
+      [
+        "team8-after-direction"
+      ]
+    ]
+  },
+  {
+    "id": "team8-http",
+    "type": "http in",
+    "z": "team8-control-tab",
+    "name": "Team8 command API",
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "team8-command"
+      ]
+    ],
+    "url": "/team8/conveyor",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": ""
+  },
+  {
+    "id": "team8-response",
+    "type": "http response",
+    "z": "team8-control-tab",
+    "name": "Command result",
+    "x": 1050,
+    "y": 80,
+    "wires": [
+      []
+    ],
+    "statusCode": "",
+    "headers": {}
+  },
+  {
+    "id": "team8-command",
+    "type": "function",
+    "z": "team8-control-tab",
+    "name": "Validate command and route gate",
+    "x": 550,
+    "y": 80,
+    "wires": [
+      [
+        "team8-response"
+      ],
+      [
+        "team8-write-speed"
+      ],
+      [
+        "team8-write-direction"
+      ]
+    ],
+    "outputs": 3,
+    "initialize": "flow.set(\"team8Deadline\",0); flow.set(\"team8RouteOK\",false); flow.set(\"team8LastCommand\",\"unknown after deploy\");",
+    "func": "const token = env.get(\"TEAM8_CONTROL_TOKEN\");\nconst reply = (code, message, speed, direction) => {\n    msg.statusCode = code;\n    const seen = flow.get(\"team8EncoderAt\") || 0;\n    msg.payload = {message, last_command:flow.get(\"team8LastCommand\") || \"none\",\n      output_requested:flow.get(\"team8Output\") ?? null,\n      route_allowed:flow.get(\"team8RouteOK\") === true,\n      pulse_remaining_ms:Math.max(0,(flow.get(\"team8Deadline\")||0)-Date.now()),\n      speed_cm_s:Date.now()-seen < 3000 ? flow.get(\"team8Speed\") ?? null : null,\n      encoder_fresh:Date.now()-seen < 3000,\n      note:\"Command state is not physical motor confirmation\"};\n    return [msg, speed === undefined ? null : {payload:speed}, direction === undefined ? null : {payload:direction}];\n};\nif (!token || token.length < 24 || msg.req.headers['x-team8-token'] !== token) return reply(403,\"Control token missing or invalid\");\nconst action = msg.payload && msg.payload.action;\nif (action === 'status') return reply(200,\"PLC bridge available\");\nif (action === 'stop') {\n    flow.set(\"team8Deadline\",0); flow.set(\"team8Output\",0); flow.set(\"team8LastCommand\",\"stop requested\");\n    return reply(200,\"Stop output requested\",0);\n}\nif (action !== 'run') return reply(400,\"Unknown action\");\nif (flow.get(\"team8RouteOK\") !== true) return reply(409,\"Scan an allowed barcode for the active destination before Run\");\nif (flow.get(\"team8RouteDestination\") !== (global.get(\"active_conveyor\") || \"conveyor_1\")) return reply(409,\"Active destination changed; scan again\");\nif (Date.now()-(flow.get(\"team8RouteAt\")||0)>10000) return reply(409,\"Route check expired; scan an allowed barcode again\");\n// Organizer flows.json uses 2.3 V on channel 7 and 0 on direction channel 6.\n// Direction is written separately BEFORE the run output (see wiring below).\nflow.set(\"team8Deadline\",Date.now()+3000); flow.set(\"team8Output\",2.3); flow.set(\"team8LastCommand\",\"3-second run requested\");\nreturn reply(200,\"3-second run requested; verify motion at the belt\",undefined,0);"
+  },
+  {
+    "id": "team8-after-direction",
+    "type": "function",
+    "z": "team8-control-tab",
+    "name": "Run only if lease and route still valid",
+    "x": 820,
+    "y": 140,
+    "wires": [
+      [
+        "team8-write-speed"
+      ]
+    ],
+    "outputs": 1,
+    "func": "return flow.get(\"team8RouteOK\") === true && Date.now() < (flow.get(\"team8Deadline\")||0) ? {payload:2.3} : {payload:0};"
+  },
+  {
+    "id": "team8-tick",
+    "type": "inject",
+    "z": "team8-control-tab",
+    "name": "Stop on deploy / pulse expiry",
+    "x": 170,
+    "y": 280,
+    "wires": [
+      [
+        "team8-watchdog"
+      ]
+    ],
+    "repeat": "0.25",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.1,
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date"
+  },
+  {
+    "id": "team8-watchdog",
+    "type": "function",
+    "z": "team8-control-tab",
+    "name": "Bound each run to 3 seconds",
+    "x": 550,
+    "y": 280,
+    "wires": [
+      [
+        "team8-write-speed"
+      ]
+    ],
+    "outputs": 1,
+    "initialize": "flow.set(\"team8NeedsStop\",true); flow.set(\"team8Deadline\",0);",
+    "func": "if (flow.get(\"team8NeedsStop\") || ((flow.get(\"team8Deadline\")||0)>0 && Date.now()>=flow.get(\"team8Deadline\"))) {\n flow.set(\"team8NeedsStop\",false); flow.set(\"team8Deadline\",0); flow.set(\"team8Output\",0);\n flow.set(\"team8LastCommand\",\"automatic stop requested\"); return {payload:0};\n} return null;"
+  },
+  {
+    "id": "team8-routing",
+    "type": "mqtt in",
+    "z": "team8-control-tab",
+    "name": "Organizer routing input",
+    "topic": "Conveyor3/baggage_routing",
+    "qos": "2",
+    "datatype": "utf8",
+    "broker": "team8-mqtt-broker",
+    "nl": false,
+    "rap": false,
+    "rh": 0,
+    "inputs": 0,
+    "x": 170,
+    "y": 400,
+    "wires": [
+      [
+        "team8-route-check"
+      ]
+    ]
+  },
+  {
+    "id": "team8-route-check",
+    "type": "function",
+    "z": "team8-control-tab",
+    "name": "Preserve rejection stop; do not auto-restart",
+    "x": 550,
+    "y": 400,
+    "wires": [
+      [
+        "team8-write-speed"
+      ]
+    ],
+    "outputs": 1,
+    "initialize": "flow.set(\"team8RouteOK\",false);",
+    "func": "let p; try {p=typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;} catch(e) {p=null;}\nconst active = global.get(\"active_conveyor\") || \"conveyor_1\";\nconst ok = !msg.retain && p && typeof p.barcode === 'string' && p.barcode.length>0 && p.in_picklist === true && p.conveyor === active;\nflow.set(\"team8RouteOK\",!!ok); flow.set(\"team8RouteAt\",Date.now()); flow.set(\"team8RouteDestination\",ok ? p.conveyor : null);\nif (!ok) {flow.set(\"team8Deadline\",0);flow.set(\"team8Output\",0);flow.set(\"team8LastCommand\",\"routing rejection stop requested\");return {payload:0};}\nreturn null;"
+  },
+  {
+    "id": "team8-encoder",
+    "type": "groov-io-input",
+    "z": "team8-control-tab",
+    "device": "team8-groov-device",
+    "dataType": "channel-digital-feature-value",
+    "moduleIndex": "",
+    "channelIndex": "0",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "sendInitialValue": true,
+    "deadband": "1",
+    "scanTimeSec": "1.0",
+    "name": "encoder",
+    "x": 170,
+    "y": 520,
+    "wires": [
+      [
+        "team8-encoder-speed"
+      ]
+    ]
+  },
+  {
+    "id": "team8-encoder-speed",
+    "type": "function",
+    "z": "team8-control-tab",
+    "name": "Organizer encoder formula (cm/s)",
+    "x": 550,
+    "y": 520,
+    "wires": [
+      []
+    ],
+    "outputs": 1,
+    "initialize": "flow.set(\"team8PreviousEncoder\",null);flow.set(\"team8EncoderAt\",0);flow.set(\"team8Speed\",null);",
+    "func": "const now=Date.now(), count=Number(msg.payload), prev=flow.get(\"team8PreviousEncoder\");\nif (!Number.isFinite(count)) return null;\nif (prev && now>prev.time) {\n const delta=count-prev.count;\n flow.set(\"team8Speed\",delta>=0 ? delta/(700*4)*(10.5*3.14)/((now-prev.time)/1000) : null);\n}\nflow.set(\"team8PreviousEncoder\",{count,time:now}); flow.set(\"team8EncoderAt\",now);return null;"
+  }
+]

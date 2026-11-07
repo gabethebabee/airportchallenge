@@ -1,5 +1,7 @@
 # Run the dashboard
 
+**Hardware integration update:** an optional physical-control panel now connects through `team8conveyor_control.py` and the generated `team8conveyor_flow.json`. It is disabled by default. See `team8CONTROL.md` for commissioning and the source-backed scope review. Synthetic motor cards/bag histories remain independent from this panel. Earlier statements below about no hardware control apply to the demo dataset, not the optional bridge.
+
 In the VS Code terminal, from this project folder:
 
 ```powershell

@@ -1,5 +1,9 @@
 # Team 8 build plan
 
+## Update after inspecting the organizer ZIP
+
+See `team8CONTROL.md` for the verified hardware mapping and revised scope. The optional run/stop integration is now implemented but not commissioned. Prioritize one physical checkpoint, camera stoppage detection, and operator alerts. The three demo cameras/motors are illustrative, not discovered equipment. The encoder supplies linear speed in cm/s; no current sensor data is supplied. Actual control is isolated so it can be disabled without losing the demo UI. Multi-checkpoint bag histories and current-based maintenance remain unconnected until observations/sensors exist.
+
 ## Available work time
 
 - Saturday November 7, 2026: remaining time until **5:00 p.m.**

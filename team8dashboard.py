@@ -7,7 +7,14 @@ This build uses synthetic data and controls no physical equipment.
 
 import argparse
 import json
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# OPTIONAL HARDWARE MODULE: comment out this import to remove the integration.
+from team8conveyor_control import ConveyorControl, ENABLE_CONVEYOR_CONTROL
+
+CONTROL = None
+CONTROL_SESSION = secrets.token_urlsafe(32)
 
 
 HTML = r'''<!doctype html>
@@ -17,7 +24,8 @@ HTML = r'''<!doctype html>
 :root{--ink:#182b36;--muted:#586b76;--line:#dce4e8;--bg:#f4f7f8;--green:#166544;--red:#ab3030;--amber:#8b570b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}button,input,select{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink);padding:9px 14px}button:hover{background:#edf3f5}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #197f9e;outline-offset:3px}header{padding:20px 32px;background:white;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px}h1{font-size:22px;margin:0}h2{font-size:19px;margin:0 0 16px}h3{font-size:16px;margin:0}p{margin:5px 0 12px}.muted,small{color:var(--muted)}.eyebrow{font-size:12px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;color:var(--muted)}main{max-width:1450px;margin:auto;padding:24px 32px}.banner{padding:12px 16px;background:#fff3d7;border:1px solid #ecd5a1;border-radius:9px;margin-bottom:20px}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}.badge{display:inline-block;border-radius:6px;padding:3px 9px;font-size:13px;font-weight:700;background:#e9eff2;color:#455966}.good{color:var(--green);background:#e4f3eb}.bad{color:var(--red);background:#fde9e7}.warn{color:var(--amber);background:#fff1d7}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0}.card,.panel{background:white;border:1px solid var(--line);border-radius:12px;padding:20px}.number{font-size:32px;font-weight:700;margin:4px 0}.tabs{display:flex;gap:8px;margin:0 0 22px;border-bottom:1px solid var(--line);padding-bottom:12px}.tabs button[aria-selected=true]{background:var(--ink);color:white}.grid{display:grid;grid-template-columns:1.6fr 1fr;gap:20px}.camera{position:relative;background:#e8eef0;border-radius:10px;overflow:hidden;margin:14px 0}.camera svg{width:100%;display:block}.camera video,.camera img{width:100%;max-height:380px;object-fit:contain;background:#172831;display:block}.camera-label{position:absolute;left:14px;top:12px;background:white;padding:5px 9px;border-radius:5px;font-size:13px}.camera-buttons button[aria-pressed=true]{border:2px solid #197f9e;background:#eaf6fa}.alert{border-left:4px solid #c44036;background:#fff7f6;padding:14px;margin-top:12px;border-radius:6px}.alert.warning{border-color:#bd8424;background:#fffaf0}.alert p{font-size:14px}.alert button{font-size:14px;padding:6px 10px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left;font-size:14px}th{color:var(--muted);font-weight:600;background:#f7f9fa}td,th{padding:13px 12px;border-bottom:1px solid var(--line);white-space:nowrap}td button{font-size:14px;padding:5px 10px}.timeline{list-style:none;padding:0;margin:12px 0}.timeline li{border-left:2px solid #cbdce3;padding:0 0 20px 18px;margin-left:6px;position:relative}.timeline li:before{content:'';width:10px;height:10px;background:#267895;border-radius:50%;position:absolute;left:-6px;top:6px}.timeline small{display:block}.search{padding:9px 12px;border:1px solid #b9c8cf;border-radius:8px;width:min(100%,300px)}.chart{width:100%;height:auto;display:block}.chart text{font:12px system-ui;fill:#586b76}.legend{font-size:13px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#277f9e;margin-right:5px}.hidden{display:none!important}.notice{background:#eef4f7;border-radius:8px;padding:12px;font-size:14px}dialog{border:1px solid var(--line);border-radius:14px;padding:24px;width:min(560px,94vw);max-height:85vh}dialog::backdrop{background:#10232c88}.toolbar{margin:16px 0}footer{font-size:13px;color:var(--muted);padding:22px 0}select{padding:8px;border:1px solid var(--line);border-radius:8px;background:white}a{color:#126581}@media(max-width:900px){.grid{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}header,main{padding:18px}.tabs{overflow:auto}}@media(prefers-reduced-motion:no-preference){.moving{animation:travel 5s linear infinite}@keyframes travel{from{transform:translateX(-70px)}to{transform:translateX(150px)}}}
 </style></head><body>
 <header><div><div class="eyebrow">Team 8 / Operations</div><h1>Conveyor watch</h1></div><div class="row"><span class="badge warn">DEMO DATA</span><span id="clock" class="muted"></span></div></header>
-<main><div class="banner"><strong>Demo workspace.</strong> Bags, motor readings, alerts, and camera illustrations are synthetic. No live hardware is connected.</div>
+<main><div class="banner"><strong>Demo workspace.</strong> Bags, motor cards, alerts, and camera illustrations below are synthetic. The separate hardware panel reports its own connection state.</div>
+<section class="panel" style="margin-bottom:20px" aria-labelledby="hardware-title"><div class="row between"><h2 id="hardware-title">Physical conveyor · separate from demo data</h2><span id="controlState" class="badge">Checking configuration</span></div><p class="muted">One testbed belt · fixed organizer direction · Run requests a 3-second pulse. This is an operational stop, not an emergency stop.</p><div class="row"><button id="controlRun" disabled>Run for 3 seconds</button><button id="controlStop" disabled>Stop conveyor</button><button id="controlRefresh">Refresh PLC status</button></div><p id="controlMessage" role="status" style="margin-top:12px">Hardware controls are disabled unless explicitly enabled on the Python server.</p><div id="controlTelemetry" class="notice">Encoder speed: unknown. Physical movement is not inferred from a command.</div></section>
 <div class="row between"><div><h2 style="margin-bottom:2px">A clear view of every checkpoint.</h2><span class="muted">Find the issue. See the bag. Know what happened.</span></div><button id="reset">Reset demo</button></div>
 <div class="cards" id="summary"></div>
 <nav class="tabs" role="tablist" aria-label="Dashboard sections"><button role="tab" id="tab-overview" aria-controls="overview" aria-selected="true" data-tab="overview">Overview</button><button role="tab" id="tab-bags" aria-controls="bags" aria-selected="false" data-tab="bags">Bag history</button><button role="tab" id="tab-motors" aria-controls="motors" aria-selected="false" data-tab="motors">Motors</button><button role="tab" id="tab-reports" aria-controls="reports" aria-selected="false" data-tab="reports">Reports</button></nav>
@@ -72,11 +80,69 @@ $('cameraFile').onchange=e=>{const f=e.target.files[0];if(!f)return;if(!/^(image
 $('reset').onclick=()=>{data=makeDemo();for(const m of media.values())URL.revokeObjectURL(m.url);media.clear();selectedCamera='CAM-02';$('bagSearch').value='';render();};
 $('export').onclick=()=>{const report={source:'synthetic',exported_at:new Date().toISOString(),notes:'Fixed demo data; no live sensors connected. Acknowledgement is not resolution.',...data};const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='team8system_report.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 setInterval(()=>{$('clock').textContent=new Date().toLocaleTimeString();},1000);tab('overview');render();
+// Optional controls: deleting this block leaves the demo dashboard functional.
+let controlBusy=false, controlToken='';
+async function controlRequest(action){
+ if(controlBusy)return;controlBusy=true;$('controlRun').disabled=true;$('controlStop').disabled=true;
+ try{
+  if(!controlToken){const session=await fetch('/api/conveyor/session',{cache:'no-store'});if(!session.ok)throw Error('Cannot obtain local control session');controlToken=(await session.json()).token;}
+  const r=await fetch('/api/conveyor',{method:'POST',headers:{'Content-Type':'application/json','X-Team8-Session':controlToken},body:JSON.stringify({action}),signal:AbortSignal.timeout(5000)});
+  const s=await r.json();if(!r.ok)throw Error(s.message||'PLC request failed');
+  $('controlState').textContent=s.enabled?'HARDWARE BRIDGE ENABLED':'CONTROLS DISABLED';
+  $('controlState').className='badge '+(s.enabled?'warn':'');$('controlMessage').textContent=s.message;
+  $('controlTelemetry').textContent=s.enabled?`Encoder speed: ${s.speed_cm_s==null?'unknown':Number(s.speed_cm_s).toFixed(2)+' cm/s'} · Encoder updates: ${s.encoder_fresh?'fresh':'stale / unavailable'} · Last command: ${s.last_command||'unknown'} · Requested output: ${s.output_requested==null?'unknown':s.output_requested+' V'} · Pulse remaining: ${s.pulse_remaining_ms||0} ms. This does not confirm physical motion.`:'No hardware request sent. Demo motor cards remain synthetic.';
+  $('controlRun').disabled=!s.enabled;$('controlStop').disabled=!s.enabled;
+ }catch(e){$('controlState').textContent='CONNECTION UNKNOWN';$('controlMessage').textContent=e.message+'. A timed-out command may have executed. Verify the belt locally; no automatic retry.';$('controlTelemetry').textContent='Physical state unknown; encoder data unavailable.';$('controlStop').disabled=false;}
+ finally{controlBusy=false;}
+}
+$('controlRun').onclick=()=>{if(confirm('Request a 3-second run on the physical conveyor? Confirm the belt is clear and you are at the assigned testbed.'))controlRequest('run');};
+$('controlStop').onclick=()=>controlRequest('stop');$('controlRefresh').onclick=()=>controlRequest('status');controlRequest('status');
 </script></body></html>'''
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def send_json(self, data, status=200):
+        body = json.dumps(data).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def local_request(self):
+        # Bind to loopback and reject unexpected Host headers / cross-site requests.
+        expected = f'127.0.0.1:{self.server.server_port}'
+        host = self.headers.get('Host', '')
+        origin = self.headers.get('Origin')
+        return host in (expected, f'localhost:{self.server.server_port}') and (not origin or origin == 'http://' + host)
+
+    def do_POST(self):
+        if self.path != '/api/conveyor':
+            return self.send_json({'message': 'Not found'}, 404)
+        if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
+            return self.send_json({'message': 'Invalid local control session'}, 403)
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 1024:
+                raise ValueError('Invalid request size')
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload, dict) or payload.get('action') not in ('status', 'run', 'stop'):
+                raise ValueError('Invalid action')
+            if CONTROL is None:
+                return self.send_json({'enabled': False, 'message': 'Hardware module disabled; no command sent.'})
+            return self.send_json(CONTROL.request(payload['action']))
+        except (ValueError, json.JSONDecodeError):
+            return self.send_json({'message': 'Invalid control request'}, 400)
+        except Exception:
+            # Never leak PLC credentials or automatically retry physical commands.
+            return self.send_json({'message': 'PLC request failed or was rejected; inspect PLC and connection. Command outcome unknown.'}, 502)
+
     def do_GET(self):
+        if self.path == '/api/conveyor/session':
+            if not self.local_request():
+                return self.send_json({'message': 'Local requests only'}, 403)
+            return self.send_json({'token': CONTROL_SESSION})
         if self.path in ('/', '/index.html'):
             body = HTML.encode('utf-8')
             content_type = 'text/html; charset=utf-8'
@@ -95,12 +161,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    global CONTROL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8080)
     args = parser.parse_args()
+    # OPTIONAL HARDWARE HOOK: comment out this block to leave controls disabled.
+    if globals().get('ENABLE_CONVEYOR_CONTROL', False):
+        CONTROL = ConveyorControl(enabled=True)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), DashboardHandler)
     print(f'Team 8 dashboard: http://127.0.0.1:{args.port}')
-    print('DEMO DATA ONLY. Press Ctrl+C to stop.')
+    print('Demo dashboard. Hardware bridge ' + ('ENABLED' if CONTROL else 'DISABLED') + '. Ctrl+C to stop.')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
