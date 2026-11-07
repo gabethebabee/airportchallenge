@@ -1,0 +1,214 @@
+{
+  "description": "Synthetic single-zone sequence. Replay timestamps are the clock; checkpoints are not observations.",
+  "observations": [
+    {
+      "schema_version": 1,
+      "event_id": "demo-000",
+      "timestamp": "2026-11-07T18:00:00Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-001",
+      "timestamp": "2026-11-07T18:00:01Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-002",
+      "timestamp": "2026-11-07T18:00:02Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-003",
+      "timestamp": "2026-11-07T18:00:03Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-004",
+      "timestamp": "2026-11-07T18:00:04Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-005",
+      "timestamp": "2026-11-07T18:00:05Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-006",
+      "timestamp": "2026-11-07T18:00:06Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-007",
+      "timestamp": "2026-11-07T18:00:07Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-008",
+      "timestamp": "2026-11-07T18:00:08Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-009",
+      "timestamp": "2026-11-07T18:00:09Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": false,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-010",
+      "timestamp": "2026-11-07T18:00:10Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": false,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-011",
+      "timestamp": "2026-11-07T18:00:11Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": false,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-012",
+      "timestamp": "2026-11-07T18:00:12Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 0.0,
+      "belt_running": false,
+      "confidence": 0.95,
+      "image_path": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "demo-013",
+      "timestamp": "2026-11-07T18:00:13Z",
+      "source": "synthetic",
+      "zone_id": "zone_1",
+      "track_id": "track_1",
+      "bag_present": true,
+      "motion_px_per_s": 40.0,
+      "belt_running": true,
+      "confidence": 0.95,
+      "image_path": null
+    }
+  ],
+  "checkpoints": [
+    {
+      "expected_state": "NORMAL",
+      "timestamp": "2026-11-07T18:00:00Z"
+    },
+    {
+      "expected_state": "JAM",
+      "timestamp": "2026-11-07T18:00:05Z"
+    },
+    {
+      "expected_incident": "resolved",
+      "timestamp": "2026-11-07T18:00:08Z",
+      "expected_state": "NORMAL"
+    },
+    {
+      "expected_state": "PAUSED",
+      "timestamp": "2026-11-07T18:00:12Z"
+    },
+    {
+      "expected_state": "NORMAL",
+      "timestamp": "2026-11-07T18:00:13Z"
+    },
+    {
+      "expected_state": "UNKNOWN",
+      "timestamp": "2026-11-07T18:00:17Z"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "mode": "replay",
+  "replay_file": "team8demo_events.json",
+  "mqtt": {
+    "enabled": false,
+    "host": "",
+    "port": 1883,
+    "observation_topic": "team8/observations",
+    "barcode_topic": "Conveyor3/baggage_routing",
+    "client_id": "team8-monitor"
+  },
+  "detection": {
+    "motion_threshold_px_per_s": 5.0,
+    "stationary_seconds": 3.0,
+    "recovery_seconds": 2.0,
+    "telemetry_timeout_seconds": 2.5,
+    "minimum_confidence": 0.6
+  },
+  "zones": [
+    {
+      "zone_id": "zone_1",
+      "label": "Demo conveyor checkpoint",
+      "camera_index": 0,
+      "roi_xywh": null
+    }
+  ],
+  "notes": "Proposed settings only; no loader exists yet. Calibrate thresholds and ROI on the actual camera. MQTT is disabled by default; enter organizer-assigned connection settings locally."
+}
