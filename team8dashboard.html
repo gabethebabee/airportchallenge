@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Team 8 · Conveyor watch</title>
+    <link rel="stylesheet" href="/team8dashboard.css">
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="eyebrow">Team 8 / Operations</div>
+        <h1>Conveyor watch</h1>
+      </div>
+      <div class="row">
+        <span class="badge">Team 8</span>
+        <span id="clock" class="muted">
+        </span>
+      </div>
+    </header>
+    <main>
+      <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button role="tab" id="tab-overview" aria-controls="overview" aria-selected="true" data-tab="overview">Overview</button>
+        <button role="tab" id="tab-transit" aria-controls="transit" aria-selected="false" data-tab="transit">A to B timing</button>
+        <button role="tab" id="tab-bags" aria-controls="bags" aria-selected="false" data-tab="bags">Bag history</button>
+        <button role="tab" id="tab-motors" aria-controls="motors" aria-selected="false" data-tab="motors">Motors</button>
+        <button role="tab" id="tab-reports" aria-controls="reports" aria-selected="false" data-tab="reports">Reports</button>
+        <button role="tab" id="tab-hardware" aria-controls="hardware" aria-selected="false" data-tab="hardware">Belt control</button>
+      </nav>
+      <div class="banner">Overview, bag, motor and report views use <strong>demo data</strong>. A–B timing records your scans.</div>
+      <div class="row between demo-heading">
+        <div>
+          <h2 style="margin-bottom:2px">A clear view of every checkpoint.</h2>
+          <span class="muted">Find the issue. See the bag. Know what happened.</span>
+        </div>
+        <button id="reset">Reset demo</button>
+      </div>
+      <div class="cards demo-heading" id="summary">
+      </div>
+      <section id="transit" role="tabpanel" aria-labelledby="tab-transit" class="hidden">
+        <div class="panel">
+          <div class="row between">
+            <div>
+              <h2>Barcode travel time · A to B</h2>
+              <p class="muted">Scan at A to start. Scan the same barcode at B to finish. Limits apply to new journeys.</p>
+            </div>
+            <span class="badge" id="transitConnection">Connecting</span>
+          </div>
+          
+          <p id="currentStandard" class="standard-display">Current standard: loading</p>
+          
+          <div id="transitSummary" class="cards">
+          </div>
+          
+          
+          <div id="transitTrips" class="table-wrap">
+          </div>
+          <details class="settings">
+            <summary>Set acceptable travel time</summary>
+            <form id="transitStandard" class="row toolbar">
+              <label>Minimum seconds <input id="transitMin" type="number" min="0" max="86399" step="0.1" value="0" required style="width:100px">
+              </label>
+              <label>Maximum seconds <input id="transitMax" type="number" min="0.1" max="86400" step="0.1" value="10" required style="width:100px">
+              </label>
+              <button>Save standard</button>
+            </form>
+          </details>
+<details class="settings">
+            <summary>Manual scan test</summary>
+            <form id="transitManual" class="row toolbar">
+              <label for="transitBarcode">Manual test barcode</label>
+              <input class="search" id="transitBarcode" maxlength="256" placeholder="e.g. JD|23.4|RED|GA2" required>
+              <button name="checkpoint" value="A">Scan at A</button>
+              <button name="checkpoint" value="B">Scan at B</button>
+            </form>
+          </details>
+<p id="transitMessage" role="status">Manual scans test the timer; they do not use a camera.</p>
+<details><summary>What an overdue alert means</summary><div class="notice">Overdue means the next checkpoint is unconfirmed. It can indicate a delayed bag, a missed scan, a paused belt, or a scanner/network problem—not necessarily a jam. Manual tests and camera/MQTT journeys are kept separate.</div></details>
+<details style="margin-top:20px">
+            <summary>Checkpoint history · latest 100 scans</summary>
+            <div id="transitScans" class="table-wrap">
+            </div>
+          </details>
+        </div>
+      </section>
+      <section id="overview" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="grid">
+          <div class="panel">
+            <div class="row between">
+              <h2>Camera checkpoints</h2>
+              <button id="expand">Expand camera</button>
+            </div>
+            <div id="camera">
+            </div>
+            <div class="row camera-buttons" id="cameraButtons">
+            </div>
+            <div class="toolbar row">
+              <label for="cameraFile">Preview a local clip or image</label>
+              <input type="file" id="cameraFile" accept="video/*,image/*">
+            </div>
+            <small>Local media stays in your browser. It is a visual preview only; it does not run detection.</small>
+          </div>
+          <div class="panel">
+            <div class="row between">
+              <h2>Needs attention</h2>
+              <span id="alertCount" class="badge bad">
+              </span>
+            </div>
+            <div id="alerts" aria-live="polite">
+            </div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:20px">
+          <div class="row between">
+            <h2>Latest bag activity</h2>
+            <button data-go="bags">View all histories</button>
+          </div>
+          <div id="recent">
+          </div>
+        </div>
+      </section>
+      <section id="bags" role="tabpanel" aria-labelledby="tab-bags" class="hidden">
+        <div class="panel">
+          <div class="row between">
+            <div>
+              <h2>Every bag has a history</h2>
+              <p class="muted">Checkpoints are recorded before an incident, not just after it.</p>
+            </div>
+            <input id="bagSearch" class="search" placeholder="Search bag ID or last location" aria-label="Search bags">
+          </div>
+          <div id="bagTable" class="table-wrap">
+          </div>
+        </div>
+      </section>
+      <section id="motors" role="tabpanel" aria-labelledby="tab-motors" class="hidden">
+        <div class="panel">
+          <h2>Motor health</h2>
+          <p class="muted">Running time within the configured speed range ÷ total running time. Intentional stops are excluded.</p>
+          <div id="motorTable" class="table-wrap">
+          </div>
+          <div class="toolbar row">
+            <label for="motorSelect">View motor</label>
+            <select id="motorSelect">
+            </select>
+          </div>
+          <div id="motorDetails">
+          </div>
+          <div class="notice">Possible jam = run requested + current above a calibrated threshold + encoder not moving for a sustained window. A stopped motor alone does not prove a jam. These demo flags are preconfigured examples, not calculated from live sensors.</div>
+        </div>
+      </section>
+      <section id="reports" role="tabpanel" aria-labelledby="tab-reports" class="hidden">
+        <div class="panel">
+          <div class="row between">
+            <div>
+              <h2>System report</h2>
+              <p class="muted">Current synthetic session · counts reflect the demo dataset.</p>
+            </div>
+            <button id="export">Download report (JSON)</button>
+          </div>
+          <div id="reportBody">
+          </div>
+          <h3 style="margin-top:24px">Incident log</h3>
+          <div id="incidentLog" class="table-wrap">
+          </div>
+        </div>
+      </section>
+      <section id="hardware" role="tabpanel" aria-labelledby="tab-hardware" class="hidden">
+        <div class="panel" aria-labelledby="hardware-title">
+          <div class="row between">
+            <h2 id="hardware-title">Physical conveyor · separate from demo data</h2>
+            <span id="controlState" class="badge">Checking configuration</span>
+          </div>
+          <p class="muted">One testbed belt · fixed organizer direction · Run requests a 3-second pulse. This is an operational stop, not an emergency stop.</p>
+          <div class="row">
+            <button id="controlRun" disabled>Run for 3 seconds</button>
+            <button id="controlStop" disabled>Stop conveyor</button>
+            <button id="controlRefresh">Refresh PLC status</button>
+          </div>
+          <p id="controlMessage" role="status" style="margin-top:12px">Hardware controls are disabled unless explicitly enabled on the Python server.</p>
+          <div id="controlTelemetry" class="notice">Encoder speed: unknown. Physical movement is not inferred from a command.</div>
+        </div>
+      </section>
+      <footer>Monitoring only · Acknowledging an alert does not resolve it or restart equipment. Demo acknowledgements stay in this browser session.</footer>
+    </main>
+    <dialog id="bagDialog">
+      <div class="row between">
+        <h2 id="bagTitle">
+        </h2>
+        <button id="closeBag" aria-label="Close bag history">Close</button>
+      </div>
+      <div id="bagHistory">
+      </div>
+    </dialog>
+    <dialog id="cameraDialog" style="width:min(1100px,96vw)">
+      <div class="row between">
+        <h2>Camera preview</h2>
+        <button id="closeCamera">Close</button>
+      </div>
+      <div id="largeCamera">
+      </div>
+    </dialog>
+    <script src="/team8dashboard.js" defer>
+    </script>
+  </body>
+</html>

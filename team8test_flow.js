@@ -38,6 +38,5 @@ execute('team8-encoder-speed',{payload:0});now+=1000;
 execute('team8-encoder-speed',{payload:2800});
 assert.ok(Math.abs(store.get('team8Speed')-32.97)<0.001);
 now+=4000;assert.equal(command('status')[0].payload.speed_cm_s,null);
-const python=fs.readFileSync('team8dashboard.py','utf8');
-new vm.Script(python.match(/<script>([\s\S]*?)<\/script>/)[1]);
+new vm.Script(fs.readFileSync('team8dashboard.js','utf8'));
 console.log('Flow wiring, authorization, routing, expiry, stop race, encoder units, and browser script syntax passed.');

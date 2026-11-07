@@ -1,5 +1,22 @@
 # Run the dashboard
 
+## Small-screen layout and source files
+
+The dashboard is designed for 800×480 / 1024×600 landscape displays and narrower portrait screens. It opens on A-to-B timing. Navigation remains visible while scrolling; touch controls are at least 48px tall. Timing standards and manual scan controls expand on demand. Small-screen tables become labelled cards with prominent time/result fields. Belt control has its own tab. Demo totals only appear in Overview.
+
+The frontend is no longer embedded in Python:
+
+| File | Edit here for |
+| --- | --- |
+| `team8dashboard.py` | Server routes and backend connections |
+| `team8dashboard.html` | Page structure, text, and controls |
+| `team8dashboard.css` | Colours, text size, spacing, responsive layout |
+| `team8dashboard.js` | Rendering, navigation, timing requests, optional controls |
+
+**USB transfer:** copy all seven files into the same folder: the four above plus `team8transit.py`, `team8conveyor_control.py`, and `team8barcode_scanner.py`. The older four-file transfer instructions predate this split. No frontend build step or internet connection is needed. HTML/CSS/JS edits load on browser refresh; Python edits still require a server restart.
+
+Layout checked in headless Chrome at 800×480, 1024×600, and 480×800 using mocked API responses. Timing-card labels, navigation, and absence of horizontal page overflow passed. Actual Jetson browser/touch hardware still needs testing.
+
 **Hardware integration update:** an optional physical-control panel now connects through `team8conveyor_control.py` and the generated `team8conveyor_flow.json`. It is disabled by default. See `team8CONTROL.md` for commissioning and the source-backed scope review. Synthetic motor cards/bag histories remain independent from this panel. Earlier statements below about no hardware control apply to the demo dataset, not the optional bridge.
 
 In the VS Code terminal, from this project folder:
