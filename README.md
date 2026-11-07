@@ -4,7 +4,7 @@
 
 Detect a bag that has stopped unexpectedly, identify its monitored zone, and show an actionable alert with a camera view or last observed image.
 
-This is the proposed MVP based on the team's notes, not an implemented system. The existing `team8dashboard.py` is empty. No live hardware integration has been verified in this checkout.
+`team8dashboard.py` now serves a working dashboard prototype with clearly labelled synthetic data. Run `python team8dashboard.py` and open http://127.0.0.1:8080. See `team8DASHBOARD.md` for features, limitations, and integration guidance. No live hardware integration has been verified in this checkout.
 
 | File | Purpose |
 | --- | --- |
@@ -13,7 +13,8 @@ This is the proposed MVP based on the team's notes, not an implemented system. T
 | `team8config.example.json` | Proposed local settings; thresholds need calibration |
 | `team8demo_events.json` | Synthetic observations for an offline demo |
 | `team8DEMO.md` | Acceptance checks and presentation outline |
-| `team8dashboard.py` | Existing dashboard entry point; implementation pending |
+| `team8dashboard.py` | Runnable dashboard prototype with synthetic data |
+| `team8DASHBOARD.md` | Launch instructions and integration status |
 
 ## Build order
 
