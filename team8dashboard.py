@@ -8,12 +8,16 @@ This build uses synthetic data and controls no physical equipment.
 import argparse
 import json
 import secrets
+import os
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from team8transit import TransitTracker
 
 # OPTIONAL HARDWARE MODULE: comment out this import to remove the integration.
 from team8conveyor_control import ConveyorControl, ENABLE_CONVEYOR_CONTROL
 
 CONTROL = None
+TRACKER = None
 CONTROL_SESSION = secrets.token_urlsafe(32)
 
 
@@ -28,7 +32,8 @@ HTML = r'''<!doctype html>
 <section class="panel" style="margin-bottom:20px" aria-labelledby="hardware-title"><div class="row between"><h2 id="hardware-title">Physical conveyor · separate from demo data</h2><span id="controlState" class="badge">Checking configuration</span></div><p class="muted">One testbed belt · fixed organizer direction · Run requests a 3-second pulse. This is an operational stop, not an emergency stop.</p><div class="row"><button id="controlRun" disabled>Run for 3 seconds</button><button id="controlStop" disabled>Stop conveyor</button><button id="controlRefresh">Refresh PLC status</button></div><p id="controlMessage" role="status" style="margin-top:12px">Hardware controls are disabled unless explicitly enabled on the Python server.</p><div id="controlTelemetry" class="notice">Encoder speed: unknown. Physical movement is not inferred from a command.</div></section>
 <div class="row between"><div><h2 style="margin-bottom:2px">A clear view of every checkpoint.</h2><span class="muted">Find the issue. See the bag. Know what happened.</span></div><button id="reset">Reset demo</button></div>
 <div class="cards" id="summary"></div>
-<nav class="tabs" role="tablist" aria-label="Dashboard sections"><button role="tab" id="tab-overview" aria-controls="overview" aria-selected="true" data-tab="overview">Overview</button><button role="tab" id="tab-bags" aria-controls="bags" aria-selected="false" data-tab="bags">Bag history</button><button role="tab" id="tab-motors" aria-controls="motors" aria-selected="false" data-tab="motors">Motors</button><button role="tab" id="tab-reports" aria-controls="reports" aria-selected="false" data-tab="reports">Reports</button></nav>
+<nav class="tabs" role="tablist" aria-label="Dashboard sections"><button role="tab" id="tab-overview" aria-controls="overview" aria-selected="true" data-tab="overview">Overview</button><button role="tab" id="tab-transit" aria-controls="transit" aria-selected="false" data-tab="transit">A to B timing</button><button role="tab" id="tab-bags" aria-controls="bags" aria-selected="false" data-tab="bags">Bag history</button><button role="tab" id="tab-motors" aria-controls="motors" aria-selected="false" data-tab="motors">Motors</button><button role="tab" id="tab-reports" aria-controls="reports" aria-selected="false" data-tab="reports">Reports</button></nav>
+<section id="transit" role="tabpanel" aria-labelledby="tab-transit" class="hidden"><div class="panel"><div class="row between"><div><h2>Barcode travel time · A to B</h2><p class="muted">Scan at A to start. Scan the same barcode at B to finish. Limits apply to new journeys.</p></div><span class="badge" id="transitConnection">Connecting</span></div><form id="transitStandard" class="row toolbar"><label>Minimum seconds <input id="transitMin" type="number" min="0" max="86399" step="0.1" value="0" required style="width:100px"></label><label>Maximum seconds <input id="transitMax" type="number" min="0.1" max="86400" step="0.1" value="10" required style="width:100px"></label><button>Save standard</button></form><div class="notice">Overdue means the next checkpoint is unconfirmed. It can indicate a delayed bag, a missed scan, a paused belt, or a scanner/network problem—not necessarily a jam. Manual tests and camera/MQTT journeys are kept separate.</div><div id="transitSummary" class="cards"></div><form id="transitManual" class="row toolbar"><label for="transitBarcode">Manual test barcode</label><input class="search" id="transitBarcode" maxlength="256" placeholder="e.g. JD|23.4|RED|GA2" required><button name="checkpoint" value="A">Scan at A</button><button name="checkpoint" value="B">Scan at B</button></form><p id="transitMessage" role="status">Manual scans test the timer; they do not use a camera.</p><div id="transitTrips" class="table-wrap"></div><details style="margin-top:20px"><summary>Checkpoint history · latest 100 scans</summary><div id="transitScans" class="table-wrap"></div></details></div></section>
 <section id="overview" role="tabpanel" aria-labelledby="tab-overview"><div class="grid"><div class="panel"><div class="row between"><h2>Camera checkpoints</h2><button id="expand">Expand camera</button></div><div id="camera"></div><div class="row camera-buttons" id="cameraButtons"></div><div class="toolbar row"><label for="cameraFile">Preview a local clip or image</label><input type="file" id="cameraFile" accept="video/*,image/*"></div><small>Local media stays in your browser. It is a visual preview only; it does not run detection.</small></div><div class="panel"><div class="row between"><h2>Needs attention</h2><span id="alertCount" class="badge bad"></span></div><div id="alerts" aria-live="polite"></div></div></div><div class="panel" style="margin-top:20px"><div class="row between"><h2>Latest bag activity</h2><button data-go="bags">View all histories</button></div><div id="recent"></div></div></section>
 <section id="bags" role="tabpanel" aria-labelledby="tab-bags" class="hidden"><div class="panel"><div class="row between"><div><h2>Every bag has a history</h2><p class="muted">Checkpoints are recorded before an incident, not just after it.</p></div><input id="bagSearch" class="search" placeholder="Search bag ID or last location" aria-label="Search bags"></div><div id="bagTable" class="table-wrap"></div></div></section>
 <section id="motors" role="tabpanel" aria-labelledby="tab-motors" class="hidden"><div class="panel"><h2>Motor health</h2><p class="muted">Running time within the configured speed range ÷ total running time. Intentional stops are excluded.</p><div id="motorTable" class="table-wrap"></div><div class="toolbar row"><label for="motorSelect">View motor</label><select id="motorSelect"></select></div><div id="motorDetails"></div><div class="notice">Possible jam = run requested + current above a calibrated threshold + encoder not moving for a sustained window. A stopped motor alone does not prove a jam. These demo flags are preconfigured examples, not calculated from live sensors.</div></div></section>
@@ -97,6 +102,26 @@ async function controlRequest(action){
 }
 $('controlRun').onclick=()=>{if(confirm('Request a 3-second run on the physical conveyor? Confirm the belt is clear and you are at the assigned testbed.'))controlRequest('run');};
 $('controlStop').onclick=()=>controlRequest('stop');$('controlRefresh').onclick=()=>controlRequest('status');controlRequest('status');
+let transitBusy=false,transitInitialized=false;
+const localTime=t=>t==null?'Not seen':new Date(t*1000).toLocaleTimeString();
+async function transitRequest(path,body){
+ if(body&&!controlToken){const r=await fetch('/api/conveyor/session');if(!r.ok)throw Error('Session unavailable');controlToken=(await r.json()).token;}
+ const r=await fetch('/api/transit'+path,{method:body?'POST':'GET',cache:'no-store',headers:body?{'Content-Type':'application/json','X-Team8-Session':controlToken}:{},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(5000)});
+ const s=await r.json();if(!r.ok)throw Error(s.message||'Timing request failed');return s;
+}
+async function refreshTransit(){
+ if(transitBusy)return;transitBusy=true;
+ try{const s=await transitRequest('');$('transitConnection').textContent='TIMING SERVER CONNECTED';$('transitConnection').className='badge good';
+ if(!transitInitialized){$('transitMin').value=s.standard.minimum;$('transitMax').value=s.standard.maximum;transitInitialized=true;}
+ const completed=s.trips.filter(t=>t.arrived!==null),overdue=s.trips.filter(t=>t.status==='Overdue');
+ $('transitSummary').innerHTML=[['Travelling',s.trips.filter(t=>t.arrived===null).length],['Overdue arrivals',overdue.length],['Completed',completed.length],['Within standard',completed.filter(t=>t.status==='On time').length+' / '+completed.length]].map(([l,n])=>`<div class="card">${l}<div class="number">${n}</div><small>Latest 100 journeys</small></div>`).join('');
+ $('transitTrips').innerHTML=`<table><thead><tr><th>Barcode / journey</th><th>Source</th><th>Seen at A</th><th>Seen at B</th><th>Elapsed</th><th>Standard</th><th>Result</th></tr></thead><tbody>${s.trips.map(t=>`<tr><td><strong>${esc(t.barcode)}</strong><br><small>Journey ${t.id}</small></td><td>${esc(t.source)}</td><td>${localTime(t.started)}</td><td>${localTime(t.arrived)}</td><td>${t.elapsed_seconds.toFixed(2)} s</td><td>${t.minimum}–${t.maximum} s</td><td><span class="badge ${['Late','Overdue','Clock error'].includes(t.status)?'bad':t.status==='On time'?'good':'warn'}">${esc(t.status)}</span></td></tr>`).join('')||'<tr><td colspan="7">No journeys yet. Scan a barcode at checkpoint A.</td></tr>'}</tbody></table>`;
+ $('transitScans').innerHTML=`<table><thead><tr><th>Time</th><th>Barcode</th><th>Checkpoint</th><th>Source</th><th>Event</th></tr></thead><tbody>${s.scans.map(e=>`<tr><td>${localTime(e.at)}</td><td>${esc(e.barcode)}</td><td>${esc(e.checkpoint)}</td><td>${esc(e.source)}</td><td>${esc(e.outcome)}</td></tr>`).join('')}</tbody></table>`;
+ }catch(e){$('transitConnection').textContent='TIMING CONNECTION LOST';$('transitConnection').className='badge bad';$('transitMessage').textContent=e.message+' · Values shown may be stale.';}finally{transitBusy=false;}
+}
+$('transitStandard').onsubmit=async e=>{e.preventDefault();try{const s=await transitRequest('/standard',{minimum:Number($('transitMin').value),maximum:Number($('transitMax').value)});$('transitMessage').textContent=s.message;await refreshTransit();}catch(err){$('transitMessage').textContent=err.message;}};
+$('transitManual').onsubmit=async e=>{e.preventDefault();const checkpoint=e.submitter?.value;if(!['A','B'].includes(checkpoint))return;try{const s=await transitRequest('/scan',{barcode:$('transitBarcode').value,checkpoint,source:'manual',event_id:crypto.randomUUID()});$('transitMessage').textContent=s.message;await refreshTransit();}catch(err){$('transitMessage').textContent=err.message;}};
+refreshTransit();setInterval(()=>{if(activeTab==='transit')refreshTransit();},1000);
 </script></body></html>'''
 
 
@@ -118,6 +143,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return host in (expected, f'localhost:{self.server.server_port}') and (not origin or origin == 'http://' + host)
 
     def do_POST(self):
+        if self.path.startswith('/api/transit/'):
+            return self.transit_post()
         if self.path != '/api/conveyor':
             return self.send_json({'message': 'Not found'}, 404)
         if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
@@ -139,6 +166,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.send_json({'message': 'PLC request failed or was rejected; inspect PLC and connection. Command outcome unknown.'}, 502)
 
     def do_GET(self):
+        if self.path == '/api/transit':
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            if TRACKER is None:
+                return self.send_json({'message': 'Timing tracker unavailable'}, 503)
+            return self.send_json(TRACKER.snapshot())
         if self.path == '/api/conveyor/session':
             if not self.local_request():
                 return self.send_json({'message': 'Local requests only'}, 403)
@@ -159,16 +192,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def transit_post(self):
+        browser = self.local_request() and self.headers.get('X-Team8-Session') == CONTROL_SESSION
+        token = os.environ.get('TEAM8_SCAN_TOKEN', '')
+        scanner = len(token) >= 24 and secrets.compare_digest(self.headers.get('X-Team8-Scan-Token', ''), token)
+        if not browser and not (scanner and self.path == '/api/transit/scan'):
+            return self.send_json({'message': 'Invalid scan/session token'}, 403)
+        if TRACKER is None:
+            return self.send_json({'message': 'Timing tracker unavailable'}, 503)
+        try:
+            size=int(self.headers.get('Content-Length','0'))
+            if not 0 < size <= 4096:
+                raise ValueError('Invalid request size')
+            p=json.loads(self.rfile.read(size))
+            if not isinstance(p,dict): raise ValueError('Expected a JSON object')
+            if self.path == '/api/transit/standard' and browser:
+                result=TRACKER.configure(p.get('minimum'),p.get('maximum'))
+            elif self.path == '/api/transit/scan':
+                source=p.get('source','manual')
+                if browser and source!='manual': raise ValueError('Browser tests must use manual source')
+                if not browser and source not in ('camera','mqtt'): raise ValueError('Scanner must use camera or mqtt source')
+                result=TRACKER.scan(p.get('barcode'),p.get('checkpoint'),source,p.get('event_id'))
+            else:
+                return self.send_json({'message':'Not found'},404)
+            return self.send_json(result)
+        except (TypeError,ValueError) as error:
+            return self.send_json({'message':str(error)},400)
+        except Exception:
+            return self.send_json({'message':'Timing record could not be saved; inspect server logs/database'},500)
+
 
 def main():
-    global CONTROL
+    global CONTROL, TRACKER
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--host', default='127.0.0.1', help='Use 0.0.0.0 only when remote checkpoint scanners must connect')
     args = parser.parse_args()
     # OPTIONAL HARDWARE HOOK: comment out this block to leave controls disabled.
     if globals().get('ENABLE_CONVEYOR_CONTROL', False):
         CONTROL = ConveyorControl(enabled=True)
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), DashboardHandler)
+    TRACKER = TransitTracker(str(Path(__file__).with_name('team8transit.sqlite3')))
+    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f'Team 8 dashboard: http://127.0.0.1:{args.port}')
     print('Demo dashboard. Hardware bridge ' + ('ENABLED' if CONTROL else 'DISABLED') + '. Ctrl+C to stop.')
     try:
@@ -177,6 +241,7 @@ def main():
         pass
     finally:
         server.server_close()
+        TRACKER.close()
 
 
 if __name__ == '__main__':

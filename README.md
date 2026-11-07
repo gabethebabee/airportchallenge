@@ -2,6 +2,8 @@
 
 ## Start here
 
+**Barcode timing:** open the new **A to B timing** tab for persistent travel-time measurements and configurable limits. `team8barcode_scanner.py` connects camera A/B or distinct organizer MQTT topics. See `team8TIMING.md` for setup and manual testing. This feature is independent of the synthetic overview and optional conveyor controls.
+
 **Organizer ZIP reviewed:** see `team8CONTROL.md` for the revised single-testbed scope and optional conveyor-control setup. Run/stop is isolated in `team8conveyor_control.py`, disabled by default. The importable `team8conveyor_flow.json` is generated from the supplied Node-RED flows; it has not been deployed. The rest of the dashboard still uses synthetic data.
 
 Detect a bag that has stopped unexpectedly, identify its monitored zone, and show an actionable alert with a camera view or last observed image.
