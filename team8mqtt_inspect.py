@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--topic', action='append', help='Assigned station prefix; repeat for multiple prefixes')
     parser.add_argument('--seconds', type=float, default=15)
     args = parser.parse_args()
-    topics = args.topic or ['Conveyor3/#', 'team8/Conveyor3/#']
+    topics = args.topic or ['Conveyor4/#']
     client = mqtt_client('team8-inspect-' + uuid.uuid4().hex[:10])
 
     # Subscribe only to the requested station prefixes after connecting; this diagnostic

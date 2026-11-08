@@ -1,9 +1,11 @@
-"""Team 8 conveyor dashboard. Standard library only.
+"""Team 8 conveyor dashboard. MQTT input uses optional Paho.
 
 Run: python team8dashboard.py
 Open: http://127.0.0.1:8080
-Demo views, persistent barcode timing, and an optional hardware bridge.
-Frontend: team8dashboard.html, team8dashboard.css, team8dashboard.js.
+Default: conveyor 4 speed/current monitoring and MQTT FLAG publication.
+Camera: Jetson MQTT previews and AprilTag journeys via team8vision.py.
+Older explicit MQTT configs retain barcode timing and the legacy dashboard.
+Default frontend: team8conveyor4.html, team8conveyor4.css, team8conveyor4.js.
 """
 
 import argparse
@@ -11,6 +13,7 @@ import json
 import secrets
 import os
 import threading
+
 from pathlib import Path
 from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler
@@ -30,6 +33,8 @@ except ImportError:  # Python 3.6 on older Jetson images.
 
 from team8transit import TransitTracker
 from team8monitor import CameraFrames, MQTTInputs, SensorMonitor
+from team8conveyor4 import Conveyor4Monitor, Conveyor4MQTT
+from team8vision import VisionInbox
 
 # OPTIONAL HARDWARE MODULE: comment out this import to remove the integration.
 from team8conveyor_control import ConveyorControl, ENABLE_CONVEYOR_CONTROL
@@ -39,6 +44,10 @@ CONTROL = None
 TRACKER = None
 SENSORS = None
 MQTT = None
+C4 = None
+C4_MQTT = None
+VISION = None
+USE_CONVEYOR4 = True
 FRAMES = CameraFrames()
 # This browser-session token is separate from the scanner password and the PLC control token.
 CONTROL_SESSION = secrets.token_urlsafe(32)
@@ -85,6 +94,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # explicitly requesting a conveyor action. This dispatcher separates those routes so scanner
     # credentials cannot grant physical-control access.
     def do_POST(self):
+        if self.path == '/api/conveyor4/tag-ack':
+            if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
+                return self.send_json({'message': 'Invalid local session'}, 403)
+            if TRACKER is None:
+                return self.send_json({'message': 'Journey tracker unavailable'}, 503)
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 1024:
+                    raise ValueError('Invalid request size')
+                payload = json.loads(self.rfile.read(size))
+                if not isinstance(payload, dict) or type(payload.get('trip_id')) is not int:
+                    raise ValueError('Expected integer trip_id')
+                return self.send_json(TRACKER.acknowledge(payload['trip_id']))
+            except (ValueError, TypeError) as error:
+                return self.send_json({'message': str(error)}, 400)
+        if self.path == '/api/conveyor4/recalibrate':
+            if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
+                return self.send_json({'message': 'Invalid local session'}, 403)
+            if C4 is None:
+                return self.send_json({'message': 'Conveyor 4 monitor unavailable'}, 503)
+            C4.recalibrate()
+            if C4_MQTT:
+                C4_MQTT.tick(force=True)
+            return self.send_json({'message': 'Recalibrating from new readings; cumulative totals are preserved.'})
         if self.path.startswith('/api/camera/'):
             return self.camera_post()
         if self.path.startswith('/api/monitor/'):
@@ -117,6 +150,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # files. Reading this interface never requests a motor run.
     def do_GET(self):
         self.path = urlsplit(self.path).path
+        if self.path == '/api/conveyor4/camera':
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            frame = VISION.jpeg() if VISION else None
+            if frame is None:
+                return self.send_json({'message': 'MQTT camera unavailable or stale'}, 503)
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Content-Length', str(len(frame)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return self.wfile.write(frame)
+        if self.path == '/api/conveyor4':
+            if not self.local_request():
+                return self.send_json({'message': 'Local dashboard requests only'}, 403)
+            if C4 is None:
+                return self.send_json({'message': 'Conveyor 4 monitor unavailable in legacy mode'}, 503)
+            state = C4.snapshot()
+            state['publish_error'] = C4_MQTT.publish_error if C4_MQTT else 'MQTT client not started'
+            state['vision'] = VISION.snapshot() if VISION else None
+            return self.send_json(state)
         if self.path.startswith('/api/transit/trip/'):
             if not self.local_request():
                 return self.send_json({'message': 'Local dashboard requests only'}, 403)
@@ -167,14 +221,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self.send_json({'message': 'Local requests only'}, 403)
             return self.send_json({'token': CONTROL_SESSION})
         if self.path in ('/', '/index.html'):
-            body = (ASSET_DIR / 'team8dashboard.html').read_bytes()
+            body = (ASSET_DIR / ('team8conveyor4.html' if USE_CONVEYOR4 else 'team8dashboard.html')).read_bytes()
             content_type = 'text/html; charset=utf-8'
         # An explicit asset list prevents URLs from reading arbitrary files from the project folder.
-        elif self.path in ('/team8dashboard.css', '/team8dashboard.js', '/team8live.js'):
+        elif self.path in ('/team8dashboard.css', '/team8dashboard.js', '/team8live.js', '/team8conveyor4.js', '/team8conveyor4.css'):
             body = (ASSET_DIR / self.path[1:]).read_bytes()
             content_type = ('text/css' if self.path.endswith('.css') else 'text/javascript') + '; charset=utf-8'
         elif self.path == '/health':
-            body = json.dumps({'status': 'ok', 'mode': 'monitoring', 'mqtt_enabled': MQTT is not None}).encode('utf-8')
+            body = json.dumps({'status': 'ok', 'mode': 'conveyor4' if USE_CONVEYOR4 else 'monitoring',
+                               'mqtt_enabled': C4_MQTT is not None if USE_CONVEYOR4 else MQTT is not None}).encode('utf-8')
             content_type = 'application/json'
         else:
             self.send_error(404)
@@ -281,28 +336,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
 # stores, starts the subscriber/supervisor, and serves the page. Shutdown stops background users
 # before closing their database connections.
 def main():
-    global CONTROL, TRACKER, SENSORS, MQTT
+    global CONTROL, TRACKER, SENSORS, MQTT, C4, C4_MQTT, USE_CONVEYOR4, VISION
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', default='127.0.0.1', help='Use 0.0.0.0 only when remote checkpoint scanners must connect')
-    parser.add_argument('--mqtt-config', help='Path to a team8 MQTT configuration JSON; omitted means MQTT disabled')
+    parser.add_argument('--mqtt-config', help='MQTT config path; defaults to conveyor4 local/example JSON')
     args = parser.parse_args()
     # OPTIONAL HARDWARE HOOK: comment out this block to leave controls disabled.
     if globals().get('ENABLE_CONVEYOR_CONTROL', False):
         CONTROL = ConveyorControl(enabled=True)
     TRACKER = TransitTracker(str(Path(__file__).with_name('team8transit.sqlite3')))
     config = {}
-    # Omitting this option leaves monitoring usable without trying to connect to a broker.
+    # Explicit old configurations select legacy monitoring. With no argument,
+    # use the local conveyor 4 mapping if present, otherwise the documented example.
     if args.mqtt_config:
         config = json.loads(Path(args.mqtt_config).read_text(encoding='utf-8-sig'))
-    SENSORS = SensorMonitor(str(ASSET_DIR / 'team8monitor.sqlite3'),
-                            config.get('station_id', 'Conveyor3'), config.get('limits'))
-    if config:
-        MQTT = MQTTInputs(config, TRACKER, SENSORS)
+    else:
+        default_path = ASSET_DIR / 'team8conveyor4.local.json'
+        if not default_path.exists():
+            default_path = ASSET_DIR / 'team8conveyor4.example.json'
+        config = json.loads(default_path.read_text(encoding='utf-8-sig'))
+    USE_CONVEYOR4 = config.get('monitor_type') == 'conveyor4'
+    if USE_CONVEYOR4:
+        C4 = Conveyor4Monitor(str(ASSET_DIR / 'team8conveyor4.sqlite3'), config)
+        VISION = VisionInbox(TRACKER)
+        C4_MQTT = Conveyor4MQTT(C4, vision=VISION)
         try:
-            MQTT.start()
+            C4_MQTT.start()
         except ImportError:
-            parser.error('Paho-MQTT is missing. Use the organizer Jetson environment or install it before going offline.')
+            C4.connection(False, 'Paho-MQTT missing: use the prepared Jetson environment or install paho-mqtt')
+    else:
+        SENSORS = SensorMonitor(str(ASSET_DIR / 'team8monitor.sqlite3'),
+                                config.get('station_id', 'Conveyor3'), config.get('limits'))
+        if config:
+            MQTT = MQTTInputs(config, TRACKER, SENSORS)
+            try:
+                MQTT.start()
+            except ImportError:
+                parser.error('Paho-MQTT is missing. Use the prepared Jetson environment.')
     stop_monitor = threading.Event()
 
     # Evaluate deadlines/health every second even when no browser tab is open.
@@ -313,7 +384,10 @@ def main():
         while not stop_monitor.wait(1):
             try:
                 TRACKER.evaluate_incidents()
-                SENSORS.snapshot()
+                if SENSORS:
+                    SENSORS.snapshot()
+                if C4_MQTT:
+                    C4_MQTT.tick()
             except Exception as error:
                 print('Monitoring evaluation failed:', type(error).__name__)
 
@@ -321,7 +395,8 @@ def main():
     worker.start()
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f'Team 8 dashboard: http://127.0.0.1:{args.port}')
-    print('Demo dashboard. Hardware bridge ' + ('ENABLED' if CONTROL else 'DISABLED') + '. Ctrl+C to stop.')
+    print(('Conveyor 4 monitor' if USE_CONVEYOR4 else 'Legacy dashboard') +
+          '. Hardware control bridge ' + ('ENABLED' if CONTROL else 'DISABLED') + '. Ctrl+C to stop.')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -333,7 +408,12 @@ def main():
         worker.join(timeout=3)
         if MQTT:
             MQTT.stop()
-        SENSORS.close()
+        if C4_MQTT:
+            C4_MQTT.stop()
+        if C4:
+            C4.close()
+        if SENSORS:
+            SENSORS.close()
         TRACKER.close()
 
 

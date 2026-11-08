@@ -1,0 +1,85 @@
+<!doctype html>
+<!-- SECTION: Dedicated conveyor 4 operator view.
+     These containers show server-owned measurements and calculations. No demo data
+     is substituted and the page does not publish directly to MQTT or move the belt. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Team 8 · Conveyor 4</title>
+    <link rel="stylesheet" href="/team8dashboard.css">
+    <link rel="stylesheet" href="/team8conveyor4.css">
+    <script src="/team8conveyor4.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div><div class="eyebrow">TEAM 8 · MOTOR MONITORING</div><h1>Conveyor 4</h1></div>
+      <span id="c4connection" class="badge warn" role="status">Connecting</span>
+    </header>
+    <main class="c4main">
+      <p id="c4message" class="notice">Waiting for MQTT readings. No simulated measurements are used.</p>
+
+      <!-- SECTION: Six primary readings fit above secondary diagnostics.
+           Speed/current/FLAG use live freshness rules. Distance, runtime and
+           deviation episodes are persisted cumulative totals, not current values. -->
+      <section class="c4cards" aria-label="Conveyor measurements">
+        <article class="card"><h2>Belt speed</h2><div id="c4speed" class="number">—</div><small>cm/s · measured</small></article>
+        <article class="card"><h2>Motor current</h2><div id="c4current" class="number">—</div><small>A · measured</small></article>
+        <article class="card"><h2>FLAG</h2><div id="c4flag" class="number">FALSE</div><small id="c4state">Normal not verified</small></article>
+        <article class="card"><h2>Distance ran</h2><div id="c4distance" class="number">0.00 m</div><small>Observed belt travel</small></article>
+        <article class="card"><h2>Time ran</h2><div id="c4runtime" class="number">00:00:00</div><small>Observed moving time</small></article>
+        <article class="card"><h2>Jam counter</h2><div id="c4jams" class="number">0</div><small>Abnormal episodes, not proven jams</small></article>
+      </section>
+
+      <!-- SECTION: The Jetson owns the camera and publishes bounded JPEGs/tags.
+           Opening this panel fetches the latest MQTT-received frame from Python.
+           AprilTag family/id replaces barcode text for matching A-to-B journeys. -->
+      <details id="c4visionPanel" class="panel c4panel">
+        <summary>Camera feed &amp; AprilTag checkpoints <span id="c4cameraState" class="badge warn">Waiting</span></summary>
+        <p id="c4cameraInfo" role="status">Start the AprilTag camera publisher on the Jetson.</p>
+        <img id="c4cameraImage" class="hidden" alt="Recent conveyor 4 camera snapshot with AprilTag annotations">
+        <div id="c4tags" class="row"></div>
+        <h3>A-to-B tag journeys</h3>
+        <div id="c4tagTrips"></div>
+        <div id="c4tagAlerts" aria-live="polite"></div>
+        <details class="settings">
+          <summary>Set AprilTag travel-time standard</summary>
+          <form id="c4tagLimits" class="row toolbar">
+            <label>Minimum seconds<input id="c4tagMin" type="number" min="0" step="0.1" value="0" required></label>
+            <label>Maximum seconds<input id="c4tagMax" type="number" min="0.1" step="0.1" value="10" required></label>
+            <button>Save for new tag journeys</button>
+          </form>
+          <p>Print unique tags from family tag36h11. A and B must see the same family/ID. Tag delays do not change the motor FLAG.</p>
+        </details>
+        <p id="c4tagAction" role="status"></p>
+      </details>
+
+      <!-- SECTION: Explain each average/band and its independent persistence timer.
+           The band freezes while a reading deviates. A false FLAG during warm-up
+           or missing data is labelled separately from a confirmed abnormal episode. -->
+      <section class="panel c4panel">
+        <div class="row between"><h2>Normal range &amp; timers</h2><button id="c4recalibrate">Recalibrate averages</button></div>
+        <p id="c4sharedTimer" class="notice">Shared deviation timer: 0 / 10 seconds</p>
+        <div id="c4timers" aria-live="polite"></div>
+        <p id="c4rules" class="muted"></p>
+        <p id="c4action" role="status"></p>
+      </section>
+
+      <!-- SECTION: Historical sensor values remain separate from current state.
+           Missing intervals break the chart line. Voltage is shown only as voltage
+           and never supplies the motor-current metric or current baseline. -->
+      <details class="panel c4panel">
+        <summary>Tracked speed &amp; current</summary>
+        <div id="c4charts"></div>
+        <button id="c4export">Download recent readings</button>
+      </details>
+      <details class="panel c4panel">
+        <summary>MQTT connection &amp; setup</summary>
+        <div id="c4setup"></div>
+        <p id="c4voltage"></p>
+        <p id="c4publish"></p>
+      </details>
+      <footer>FLAG true = verified normal. FLAG false = abnormal or normal not verified. Voltage is not current.</footer>
+    </main>
+  </body>
+</html>

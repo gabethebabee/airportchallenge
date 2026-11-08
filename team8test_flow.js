@@ -65,6 +65,7 @@ assert.ok(Math.abs(store.get('team8Speed')-32.97)<0.001);
 now+=4000;assert.equal(command('status')[0].payload.speed_cm_s,null);
 new vm.Script(fs.readFileSync('team8dashboard.js','utf8'));
 new vm.Script(fs.readFileSync('team8live.js','utf8'));
+new vm.Script(fs.readFileSync('team8conveyor4.js','utf8'));
 
 // Read-only sensor exporter: preserve actual encoder conversion, never write outputs.
 /* SECTION DETAIL:

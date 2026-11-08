@@ -1,5 +1,9 @@
 # Team 8 live monitoring — Jetson setup
 
+**Camera update:** use [team8APRILTAGS.md](team8APRILTAGS.md) for the current Jetson-to-MQTT camera preview and AprilTag timing path. The old barcode scanner/HTTP camera instructions below are superseded. The default Conveyor 4 page exposes the camera/tag panel below its six metrics.
+
+**Scope update:** the default dashboard is now the dedicated conveyor 4 monitor. Read `team8CONVEYOR4.md` first for its topic mapping, average-based flag and moving-time/distance rules. The Conveyor3/legacy instructions below remain for the earlier prototype only.
+
 For a beginner-friendly explanation of the source files, JSON fields, and data flow, read `team8CODE_GUIDE.md`. Runtime functions, UI sections, test helpers and generated Node-RED JavaScript now include inline comments.
 
 ## What is implemented

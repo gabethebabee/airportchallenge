@@ -1,4 +1,8 @@
-# Barcode A-to-B travel timing
+# Current camera identification: AprilTags
+
+Use [team8APRILTAGS.md](team8APRILTAGS.md) for setup. `team8apriltag_camera.py` publishes camera previews and AprilTag checkpoints over MQTT, and the default Conveyor 4 dashboard shows their A-to-B journeys. `team8barcode_scanner.py` now forwards to that script; the older barcode/HTTP options described below no longer apply to it. Existing journey records and timing logic are preserved.
+
+# Legacy barcode A-to-B travel timing
 
 ## Try it now without cameras
 

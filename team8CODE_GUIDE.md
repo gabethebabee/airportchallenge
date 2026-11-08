@@ -1,5 +1,9 @@
 # Reading the Team 8 code
 
+**Camera / AprilTags:** `team8apriltag_camera.py` runs on the Jetson and is the camera's owner. It detects square tags, assigns A/B image regions, and sends small previews plus checkpoint events to MQTT. `team8vision.py` checks those messages, expires old images, and passes tag identities into the existing journey timer. `team8conveyor4.py` subscribes to those separate topics; the browser's camera panel fetches images from Python. See [team8APRILTAGS.md](team8APRILTAGS.md) for commands, print guidance and limits. Section comments explain each stage in the new source files.
+
+**Current scope:** `team8conveyor4.py` now owns the conveyor 4 rolling averages, shared >10-second deviation timer, true/false MQTT FLAG, runtime/distance integration and abnormal-episode count. `team8conveyor4.html`, `.css` and `.js` form the default focused UI; `team8conveyor4.example.json` configures exact topics and limits. Read `team8CONVEYOR4.md` first. The barcode/legacy files explained below remain available with older explicit configurations.
+
 Comments are now included in the Python, browser JavaScript, HTML, CSS, tests, and embedded Node-RED JavaScript. This guide covers how they fit together and explains the JSON fields, because standard JSON does **not** permit comments.
 
 Each major function/section now starts with a paragraph explaining its purpose, incoming data, resulting state/output, and relevant design choices. Read that paragraph first, then follow the code beneath it; the shorter inline notes explain particular calculations or edge cases along the way.

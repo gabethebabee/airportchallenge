@@ -1,0 +1,37 @@
+/* SECTION: The conveyor 4 page uses a focused 3-by-2 metric grid.
+   Each tile has a clear unit and large value for the Jetson's 7-inch display.
+   Diagnostics stay below the core readings instead of competing for that space. */
+.c4main { padding-top: 12px; }
+/* The shared small-screen stylesheet hides generic header badges; connection
+   health is essential on this dedicated page, so keep this one visible. */
+header #c4connection { display: inline-block; font-size: 13px; }
+.c4cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.c4cards .card { padding: 12px; }
+.c4cards h2 { font-size: 17px; margin: 0; }
+.c4cards .number { font-size: 28px; margin: 5px 0; overflow-wrap: anywhere; }
+.c4cards small { font-size: 14px; }
+.c4panel { margin-top: 12px; }
+.c4timer { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.c4timer:last-child { border: 0; }
+.c4timer .badge { margin-left: 8px; }
+.c4timer p { margin: 4px 0; }
+.c4plot { width: 100%; display: block; }
+.c4plot text { font: 14px system-ui; fill: #475d69; }
+#c4setup p { overflow-wrap: anywhere; }
+
+/* SECTION: The preview scales to the small display and never stretches a wide
+   camera frame. Recorded tag journeys use simple labelled rows, avoiding a
+   seven-column table that would be unreadable on the Jetson screen. */
+#c4cameraImage { width: 100%; max-height: 55vh; object-fit: contain; background: #102a36; border-radius: 8px; }
+#c4tags { margin: 12px 0; }
+.c4tagTrip { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.c4tagTrip p { margin: 4px 0; }
+#c4tagLimits input { width: 120px; }
+
+/* SECTION: Narrow portrait screens wrap instead of shrinking text/buttons.
+   The same six measurements remain visible with vertical scrolling as needed.
+   A change of viewport never changes sampling, baselines or stored totals. */
+@media (max-width: 550px) {
+  .c4cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .c4cards .number { font-size: 25px; }
+}
