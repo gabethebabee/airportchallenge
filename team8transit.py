@@ -32,6 +32,8 @@ class TransitTracker:
         CREATE TABLE IF NOT EXISTS scans (
           event_id TEXT PRIMARY KEY, barcode TEXT, checkpoint TEXT, source TEXT, at REAL,
           trip_id INTEGER, outcome TEXT);
+        CREATE TABLE IF NOT EXISTS journey_sequence (id INTEGER PRIMARY KEY, next_id INTEGER);
+        INSERT OR IGNORE INTO journey_sequence SELECT 1,COALESCE(MAX(id),0)+1 FROM trips;
         CREATE UNIQUE INDEX IF NOT EXISTS one_active_trip ON trips(barcode,source) WHERE arrived IS NULL;
         CREATE TABLE IF NOT EXISTS transit_incidents (
           trip_id INTEGER PRIMARY KEY, raised REAL, acknowledged REAL, resolved REAL);
@@ -82,13 +84,17 @@ class TransitTracker:
                 if active:
                     outcome='Already travelling; repeated A did not restart clock'
                 else:
-                    last=self.db.execute('SELECT at FROM scans WHERE barcode=? AND source=? AND checkpoint=? ORDER BY at DESC LIMIT 1',(barcode,source,'A')).fetchone()
+                    last=self.db.execute("SELECT at FROM scans WHERE barcode=? AND source=? AND checkpoint=? AND outcome!='Cleared by journey reset' ORDER BY at DESC LIMIT 1",(barcode,source,'A')).fetchone()
                     if last and now-last['at']<3:
                         outcome='Repeated A scan suppressed (3-second debounce)'
                     else:
                         config=self.db.execute('SELECT * FROM settings WHERE id=1').fetchone()
-                        trip_id=self.db.execute('INSERT INTO trips(barcode,source,started,minimum,maximum) VALUES(?,?,?,?,?)',
-                            (barcode,source,now,config['minimum'],config['maximum'])).lastrowid
+                        # Keep journey IDs increasing across resets, preventing an
+                        # old acknowledgement request from targeting a new bag.
+                        trip_id=self.db.execute('SELECT next_id FROM journey_sequence WHERE id=1').fetchone()[0]
+                        self.db.execute('UPDATE journey_sequence SET next_id=next_id+1 WHERE id=1')
+                        self.db.execute('INSERT INTO trips(id,barcode,source,started,minimum,maximum) VALUES(?,?,?,?,?,?)',
+                            (trip_id,barcode,source,now,config['minimum'],config['maximum']))
                         outcome='Clock started at A'
             # A B scan with no active A is logged below but cannot invent a travel time.
             elif active:
@@ -170,6 +176,20 @@ class TransitTracker:
             if not result.rowcount:
                 raise ValueError('Incident not found')
         return {'message': 'Alert acknowledged; arrival at B is still required to resolve it.'}
+
+    # SECTION: Reset the operator's journey workspace atomically, including all
+    # overdue incidents. Keep scan delivery receipts detached from deleted trips
+    # so an MQTT retransmission cannot recreate a journey that was just cleared.
+    # Detaching them also excludes old A sightings from the new-trip debounce.
+    # Settings and the separate motor database are deliberately outside this reset.
+    def reset_journeys(self):
+        with self.lock, self.db:
+            count = self.db.execute('SELECT COUNT(*) FROM trips').fetchone()[0]
+            self.db.execute('DELETE FROM transit_incidents')
+            self.db.execute('UPDATE scans SET trip_id=NULL, outcome=?', ('Cleared by journey reset',))
+            self.db.execute('DELETE FROM trips')
+        return {'message': 'Cleared {} journeys and their overdue alerts. Motor totals and timing limits kept.'.format(count),
+                'cleared': count}
 
     # Read all checkpoint events for one journey, including events recorded before a problem
     # occurred.

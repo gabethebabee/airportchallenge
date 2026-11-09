@@ -2,6 +2,10 @@
 import io
 import json
 import unittest
+import hashlib
+import tarfile
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +14,7 @@ from team8apriltag_camera import CameraPublisher, initial_frame, make_detector, 
 from team8conveyor4 import Conveyor4Monitor, Conveyor4MQTT
 from team8transit import TransitTracker
 from team8vision import MAX_JPEG, TagCheckpoints, VisionInbox, pack_frame, unpack_frame, tag_key
+from team8install_apriltag import extract_sources
 
 
 # SECTION: Fake time and a temporary in-memory journey store exercise actual
@@ -182,6 +187,26 @@ class VisionTests(unittest.TestCase):
             handler.send_response.assert_called_with(200)
             self.assertIsNotNone(self.tracker.incidents()[0]['acknowledged'])
 
+    # Reset is scoped to authenticated browser actions and the journey store.
+    # Reject missing confirmation/session before deleting any real records.
+    def test_reset_http_requires_session_and_explicit_action(self):
+        self.inbox.receive_tags(self.tags())
+        self.now+=11
+        self.assertEqual(len(self.inbox.snapshot()['incidents']),1)
+        with patch.object(dashboard,'TRACKER',self.tracker):
+            handler=self.handler('/api/conveyor4/reset-journeys',{'clear':True})
+            handler.do_POST()
+            handler.send_response.assert_called_with(403)
+            handler=self.handler('/api/conveyor4/reset-journeys',{'clear':False},dashboard.CONTROL_SESSION)
+            handler.do_POST()
+            handler.send_response.assert_called_with(400)
+            self.assertEqual(len(self.tracker.snapshot()['trips']),1)
+            handler=self.handler('/api/conveyor4/reset-journeys',{'clear':True},dashboard.CONTROL_SESSION)
+            handler.do_POST()
+            handler.send_response.assert_called_with(200)
+            self.assertEqual(self.inbox.snapshot()['trips'],[])
+            self.assertEqual(self.inbox.snapshot()['incidents'],[])
+
     def test_camera_mqtt_dispatch_keeps_sensor_state_unchanged(self):
         monitor = Conveyor4Monitor(':memory:')
         try:
@@ -202,11 +227,95 @@ class VisionTests(unittest.TestCase):
         finally:
             monitor.close()
 
+    # Two publishers have unrelated session IDs and sequence counters. Routing
+    # must keep their images/offline states separate while matching one bag's
+    # A event from camera A with its B event from camera B in the shared tracker.
+    def test_two_camera_routing_and_shared_journey(self):
+        second = VisionInbox(self.tracker,clock=lambda:self.now)
+        monitor = Conveyor4Monitor(':memory:')
+        try:
+            adapter = Conveyor4MQTT(monitor,vision=self.inbox,vision_b=second)
+            def deliver(key,payload):
+                adapter.on_message(None,None,SimpleNamespace(topic=monitor.config[key],payload=payload,retain=False))
+            deliver('camera_topic',self.packet(session='camera-a'))
+            jpeg_b = b'\xff\xd8second camera\xff\xd9'
+            deliver('camera_b_topic',pack_frame(self.header(session='camera-b'),jpeg_b))
+            self.assertEqual(self.inbox.jpeg(),self.jpeg)
+            self.assertEqual(second.jpeg(),jpeg_b)
+            deliver('tags_topic',self.tags('A',session='camera-a'))
+            self.now += 3
+            deliver('tags_b_topic',self.tags('B',session='camera-b'))
+            self.assertEqual(second.snapshot()['trips'][0]['elapsed_seconds'],3)
+            self.assertEqual(second.snapshot()['trips'][0]['status'],'On time')
+            deliver('camera_b_status_topic',json.dumps(dict(conveyor=4,session_id='camera-b',online=False)).encode())
+            self.assertIsNone(second.jpeg())
+            self.assertIsNotNone(self.inbox.jpeg())
+            client = MagicMock()
+            adapter.on_connect(client,None,None,0)
+            client.subscribe.assert_any_call(monitor.config['camera_b_topic'],qos=0)
+            client.subscribe.assert_any_call(monitor.config['tags_b_topic'],qos=1)
+            adapter.on_disconnect(client,None,1)
+            self.assertIsNone(self.inbox.jpeg())
+        finally:
+            monitor.close()
+
+    def test_second_camera_http_and_topic_collision(self):
+        from team8conveyor4 import validate_config
+        with self.assertRaises(ValueError):
+            validate_config({'camera_b_topic':'Conveyor4/camera/frame'})
+        second = VisionInbox(self.tracker,clock=lambda:self.now)
+        jpeg_b = b'\xff\xd8second camera\xff\xd9'
+        second.receive_frame(pack_frame(self.header(session='camera-b'),jpeg_b))
+        with patch.object(dashboard,'VISION_B',second), patch.object(dashboard,'VISION',self.inbox):
+            handler = self.handler('/api/conveyor4/camera/B')
+            handler.do_GET()
+            handler.send_response.assert_called_with(200)
+            self.assertEqual(handler.wfile.getvalue(),jpeg_b)
+            self.assertIsNone(self.inbox.jpeg())
+            self.now += 5
+            handler = self.handler('/api/conveyor4/camera/B')
+            handler.do_GET()
+            handler.send_response.assert_called_with(503)
+
 
 # SECTION: Fake Paho and OpenCV objects test API adaptation and MQTT parameters.
 # They do not certify camera drivers or native AprilTag decoding, which require
 # the onsite preflight and a printed tag in front of the physical camera.
 class CameraAdapterTests(unittest.TestCase):
+    # Verify the shipped source really matches its manifest and is sufficient to
+    # construct a native build. The unsafe-member case exercises archive handling
+    # independently from the trusted upstream payload, without running a compiler.
+    def test_bundled_source_integrity_and_build_inputs(self):
+        root = Path(__file__).resolve().parent
+        archive = root/'team8apriltag-source.tar.gz'
+        metadata = json.loads((root/'team8apriltag-source.json').read_text())
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),metadata['sha256'])
+        with tempfile.TemporaryDirectory(prefix='team8-source-test-') as folder:
+            sources = extract_sources(archive,Path(folder))
+            self.assertGreater(len(sources),20)
+            self.assertTrue(all(Path(name).is_file() for name in sources))
+            wrapper = (Path(folder)/'python/apriltag.py').read_text()
+            self.assertEqual(wrapper.count("filename = 'libapriltag'+extension"),1)
+            self.assertTrue((Path(folder)/'LICENSE.md').is_file())
+
+    def test_source_archive_rejects_path_escape(self):
+        with tempfile.TemporaryDirectory(prefix='team8-unsafe-test-') as folder:
+            archive = Path(folder)/'team8bad.tar.gz'
+            with tarfile.open(str(archive),'w:gz') as stream:
+                info = tarfile.TarInfo('upstream/../../escape.c')
+                info.size = 1
+                stream.addfile(info,io.BytesIO(b'x'))
+            with self.assertRaises(RuntimeError):
+                extract_sources(archive,Path(folder)/'sources')
+
+    def test_bundled_adapter_passes_through_normalized_results(self):
+        tag = SimpleNamespace(tag_id=0,hamming=0,center=[10,20],corners=[[0,0]]*4)
+        detector = SimpleNamespace(detect=lambda gray:[tag])
+        with patch('team8apriltag_native.load_detector',return_value=detector):
+            name, detect = make_detector(SimpleNamespace(),backend='bundled')
+            self.assertEqual(detect(None)[0]['tag_id'],0)
+            self.assertIn('Bundled',name)
+
     # Capture routing and startup validation use fake device objects, so these
     # tests catch regressions without depending on a local webcam or native cv2.
     def test_capture_backend_selection(self):

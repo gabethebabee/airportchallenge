@@ -19,30 +19,49 @@
     <main class="c4main">
       <p id="c4message" class="notice">Waiting for MQTT readings. No simulated measurements are used.</p>
 
-      <!-- SECTION: Six primary readings fit above secondary diagnostics.
-           Speed/current/FLAG use live freshness rules. Distance, runtime and
-           deviation episodes are persisted cumulative totals, not current values. -->
+      <!-- SECTION: Primary sensor readings and health status sit above diagnostics.
+           Speed/current/FLAG use live freshness rules. The jam counter records
+           cumulative abnormal episodes rather than proving physical jams. -->
       <section class="c4cards" aria-label="Conveyor measurements">
-        <article class="card"><h2>Belt speed</h2><div id="c4speed" class="number">—</div><small>cm/s · measured</small></article>
-        <article class="card"><h2>Motor current</h2><div id="c4current" class="number">—</div><small>A · measured</small></article>
+        <article class="card"><h2>Belt speed</h2><div id="c4speed" class="number">-</div><small id="c4speedNote">cm/s · waiting</small></article>
+        <article class="card"><h2>Motor current</h2><div id="c4current" class="number">-</div><small id="c4currentNote">A · waiting</small></article>
         <article class="card"><h2>FLAG</h2><div id="c4flag" class="number">FALSE</div><small id="c4state">Normal not verified</small></article>
-        <article class="card"><h2>Distance ran</h2><div id="c4distance" class="number">0.00 m</div><small>Observed belt travel</small></article>
-        <article class="card"><h2>Time ran</h2><div id="c4runtime" class="number">00:00:00</div><small>Observed moving time</small></article>
         <article class="card"><h2>Jam counter</h2><div id="c4jams" class="number">0</div><small>Abnormal episodes, not proven jams</small></article>
       </section>
 
       <!-- SECTION: The Jetson owns the camera and publishes bounded JPEGs/tags.
            Opening this panel fetches the latest MQTT-received frame from Python.
            AprilTag family/id replaces barcode text for matching A-to-B journeys. -->
-      <details id="c4visionPanel" class="panel c4panel">
+      <details id="c4visionPanel" class="panel c4panel" open>
         <summary>Camera feed &amp; AprilTag checkpoints <span id="c4cameraState" class="badge warn">Waiting</span></summary>
-        <p id="c4cameraInfo" role="status">Start the AprilTag camera publisher on the Jetson.</p>
-        <img id="c4cameraImage" class="hidden" alt="Recent conveyor 4 camera snapshot with AprilTag annotations">
-        <div id="c4tags" class="row"></div>
-        <h3>A-to-B tag journeys</h3>
-        <div id="c4tagTrips"></div>
-        <div id="c4tagAlerts" aria-live="polite"></div>
-        <details class="settings">
+        <!-- SECTION: Desktop camera and journey history share a horizontal view.
+             Existing IDs and APIs preserve compatibility with the running Jetson.
+             Narrow windows stack these sections without shrinking the labels. -->
+        <div class="c4visionGrid">
+          <section class="c4cameraColumn" aria-label="Camera preview">
+            <!-- SECTION: Camera selection changes the preview endpoint only.
+                 Both checkpoint publishers keep recording shared A-to-B trips,
+                 including when the operator is viewing the opposite camera. -->
+            <label class="c4cameraPicker" for="c4cameraSelect">View camera
+              <select id="c4cameraSelect"><option value="A">Camera A · Start checkpoint</option><option value="B">Camera B · Arrival checkpoint</option></select>
+            </label>
+            <p id="c4cameraInfo" role="status">Start the AprilTag camera publisher on the Jetson.</p>
+            <div class="c4cameraStage">
+              <img id="c4cameraImage" class="hidden" alt="Recent conveyor 4 camera snapshot with AprilTag annotations">
+              <div class="c4cameraPlaceholder"><strong>Waiting for a current image</strong><span>Camera availability is shown above.</span></div>
+            </div>
+            <div id="c4tags" class="row"></div>
+            <p class="c4cameraHint">Two-camera mode: A starts timing; B completes timing.<span>Both checkpoints record while you switch views · Preview approximately 1 fps</span></p>
+          </section>
+          <section class="c4journeyColumn" aria-label="AprilTag journeys and alerts">
+            <!-- SECTION: Reset changes only this browser's history filter. Show
+                 cleared restores it; neither button sends a server-side reset. -->
+            <div class="c4sectionHeading"><div class="eyebrow">CHECKPOINT TRACKING</div><div class="row between"><h3>A-to-B tag journeys</h3><div class="row"><button id="c4showJourneys" class="hidden" type="button">Show cleared</button><button id="c4resetJourneys" type="button">Reset journeys</button></div></div></div>
+            <div class="c4journeyScroll">
+              <div id="c4tagAlerts" aria-live="polite"></div>
+              <div id="c4tagTrips"></div>
+            </div>
+        <details class="settings c4tagSettings">
           <summary>Set AprilTag travel-time standard</summary>
           <form id="c4tagLimits" class="row toolbar">
             <label>Minimum seconds<input id="c4tagMin" type="number" min="0" step="0.1" value="0" required></label>
@@ -52,16 +71,18 @@
           <p>Print unique tags from family tag36h11. A and B must see the same family/ID. Tag delays do not change the motor FLAG.</p>
         </details>
         <p id="c4tagAction" role="status"></p>
+          </section>
+        </div>
       </details>
 
       <!-- SECTION: Explain each average/band and its independent persistence timer.
            The band freezes while a reading deviates. A false FLAG during warm-up
            or missing data is labelled separately from a confirmed abnormal episode. -->
-      <section class="panel c4panel">
+      <section class="panel c4panel c4healthPanel">
         <div class="row between"><h2>Normal range &amp; timers</h2><button id="c4recalibrate">Recalibrate averages</button></div>
         <p id="c4sharedTimer" class="notice">Shared deviation timer: 0 / 10 seconds</p>
         <div id="c4timers" aria-live="polite"></div>
-        <p id="c4rules" class="muted"></p>
+        <details class="c4ruleDetails"><summary>How the monitoring rule works</summary><p id="c4rules" class="muted"></p></details>
         <p id="c4action" role="status"></p>
       </section>
 
@@ -76,6 +97,10 @@
       <details class="panel c4panel">
         <summary>MQTT connection &amp; setup</summary>
         <div id="c4setup"></div>
+        <!-- SECTION: The PLC/server must expose actual Groov measurements before
+             subscribing can show them. This download is an isolated read-only
+             Node-RED exporter for staff to review/import on the assigned PLC. -->
+        <p>No sensor stream? <a href="/team8conveyor4_sensors.json" download>Download the read-only Conveyor 4 sensor bridge</a> for the assigned PLC's Node-RED server. It supplies encoder speed and voltage; actual current requires a calibrated sensor mapping.</p>
         <p id="c4voltage"></p>
         <p id="c4publish"></p>
       </details>

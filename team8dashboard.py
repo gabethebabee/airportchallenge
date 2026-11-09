@@ -47,6 +47,7 @@ MQTT = None
 C4 = None
 C4_MQTT = None
 VISION = None
+VISION_B = None
 USE_CONVEYOR4 = True
 FRAMES = CameraFrames()
 # This browser-session token is separate from the scanner password and the PLC control token.
@@ -94,6 +95,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # explicitly requesting a conveyor action. This dispatcher separates those routes so scanner
     # credentials cannot grant physical-control access.
     def do_POST(self):
+        # Journey reset has its own authenticated action. It clears the journey
+        # store only; motor totals, camera sessions and hardware are independent.
+        if self.path == '/api/conveyor4/reset-journeys':
+            if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
+                return self.send_json({'message':'Invalid local session'},403)
+            if TRACKER is None:
+                return self.send_json({'message':'Journey tracker unavailable'},503)
+            try:
+                size = int(self.headers.get('Content-Length','0'))
+                if not 0 < size <= 256:
+                    raise ValueError('Invalid request size')
+                payload = json.loads(self.rfile.read(size))
+                if not isinstance(payload,dict) or payload.get('clear') is not True:
+                    raise ValueError('Expected clear: true')
+                return self.send_json(TRACKER.reset_journeys())
+            except (TypeError,ValueError) as error:
+                return self.send_json({'message':str(error)},400)
         if self.path == '/api/conveyor4/tag-ack':
             if not self.local_request() or self.headers.get('X-Team8-Session') != CONTROL_SESSION:
                 return self.send_json({'message': 'Invalid local session'}, 403)
@@ -150,10 +168,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # files. Reading this interface never requests a motor run.
     def do_GET(self):
         self.path = urlsplit(self.path).path
-        if self.path == '/api/conveyor4/camera':
+        if self.path in ('/api/conveyor4/camera', '/api/conveyor4/camera/B'):
             if not self.local_request():
                 return self.send_json({'message': 'Local dashboard requests only'}, 403)
-            frame = VISION.jpeg() if VISION else None
+            # Separate inboxes prevent one camera's sequence/session or offline
+            # state from replacing the other camera's current image.
+            inbox = VISION_B if self.path.endswith('/B') else VISION
+            frame = inbox.jpeg() if inbox else None
             if frame is None:
                 return self.send_json({'message': 'MQTT camera unavailable or stale'}, 503)
             self.send_response(200)
@@ -170,6 +191,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             state = C4.snapshot()
             state['publish_error'] = C4_MQTT.publish_error if C4_MQTT else 'MQTT client not started'
             state['vision'] = VISION.snapshot() if VISION else None
+            state['vision_b'] = VISION_B.snapshot() if VISION_B else None
             return self.send_json(state)
         if self.path.startswith('/api/transit/trip/'):
             if not self.local_request():
@@ -224,6 +246,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = (ASSET_DIR / ('team8conveyor4.html' if USE_CONVEYOR4 else 'team8dashboard.html')).read_bytes()
             content_type = 'text/html; charset=utf-8'
         # An explicit asset list prevents URLs from reading arbitrary files from the project folder.
+        elif self.path == '/team8conveyor4_sensors.json':
+            body = (ASSET_DIR / 'team8conveyor4_sensors.json').read_bytes()
+            content_type = 'application/json; charset=utf-8'
         elif self.path in ('/team8dashboard.css', '/team8dashboard.js', '/team8live.js', '/team8conveyor4.js', '/team8conveyor4.css'):
             body = (ASSET_DIR / self.path[1:]).read_bytes()
             content_type = ('text/css' if self.path.endswith('.css') else 'text/javascript') + '; charset=utf-8'
@@ -336,7 +361,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 # stores, starts the subscriber/supervisor, and serves the page. Shutdown stops background users
 # before closing their database connections.
 def main():
-    global CONTROL, TRACKER, SENSORS, MQTT, C4, C4_MQTT, USE_CONVEYOR4, VISION
+    global CONTROL, TRACKER, SENSORS, MQTT, C4, C4_MQTT, USE_CONVEYOR4, VISION, VISION_B
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', default='127.0.0.1', help='Use 0.0.0.0 only when remote checkpoint scanners must connect')
@@ -360,7 +385,8 @@ def main():
     if USE_CONVEYOR4:
         C4 = Conveyor4Monitor(str(ASSET_DIR / 'team8conveyor4.sqlite3'), config)
         VISION = VisionInbox(TRACKER)
-        C4_MQTT = Conveyor4MQTT(C4, vision=VISION)
+        VISION_B = VisionInbox(TRACKER)
+        C4_MQTT = Conveyor4MQTT(C4, vision=VISION, vision_b=VISION_B)
         try:
             C4_MQTT.start()
         except ImportError:

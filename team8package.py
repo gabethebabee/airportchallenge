@@ -5,6 +5,11 @@ import zipfile
 
 # Deliberate allowlist: never sweep the folder, because it may contain real bag databases or credentials.
 FILES = [
+    'team8conveyor4_sensors.json', 'team8SENSORS.md',
+    'team8jetson_capture.py',
+    'team8make_tags.py', 'team8tag36h11-0.png', 'team8tag36h11-1.png', 'team8tag36h11-2.png',
+    'team8apriltag_native.py', 'team8install_apriltag.py',
+    'team8apriltag-source.tar.gz', 'team8apriltag-source.json',
     'team8vision.py', 'team8apriltag_camera.py', 'team8APRILTAGS.md',
     'team8conveyor4.py', 'team8conveyor4.html', 'team8conveyor4.css', 'team8conveyor4.js',
     'team8conveyor4.example.json', 'team8CONVEYOR4.md',

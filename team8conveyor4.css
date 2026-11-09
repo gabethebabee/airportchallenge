@@ -1,37 +1,108 @@
-/* SECTION: The conveyor 4 page uses a focused 3-by-2 metric grid.
-   Each tile has a clear unit and large value for the Jetson's 7-inch display.
-   Diagnostics stay below the core readings instead of competing for that space. */
-.c4main { padding-top: 12px; }
-/* The shared small-screen stylesheet hides generic header badges; connection
-   health is essential on this dedicated page, so keep this one visible. */
-header #c4connection { display: inline-block; font-size: 13px; }
-.c4cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.c4cards .card { padding: 12px; }
-.c4cards h2 { font-size: 17px; margin: 0; }
-.c4cards .number { font-size: 28px; margin: 5px 0; overflow-wrap: anywhere; }
-.c4cards small { font-size: 14px; }
-.c4panel { margin-top: 12px; }
-.c4timer { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.c4timer:last-child { border: 0; }
+/* SECTION: Laptop defaults override the shared touch-screen sizing for this page.
+   Only presentation changes; camera/MQTT messages and local APIs stay identical. */
+body { background: #f3f6f8; font-size: 16px; line-height: 1.5; }
+header { padding: 20px 32px; }
+header h1 { font-size: 27px; letter-spacing: -.7px; }
+.eyebrow { color: #526b79; font-size: 11px; letter-spacing: 1.5px; }
+header #c4connection { display: inline-block; font-size: 12px; padding: 7px 12px; }
+.c4main { max-width: 1680px; padding: 22px 32px 28px; }
+#c4message { margin: 0 0 18px; font-size: 14px; border-left: 3px solid #748f9d; }
+.panel, .card { border-color: #dce4e9; border-radius: 14px; }
+.badge { font-size: 12px; padding: 4px 8px; border-radius: 5px; }
+button, input, select { min-height: 42px; font-size: 14px; padding: 8px 12px; }
+summary { font-size: 17px; font-weight: 650; }
+
+/* SECTION: Four primary readings share one desktop strip. Smaller windows wrap them into
+   three or two columns while retaining explicit units and unknown-data labels. */
+.c4cards { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.c4cards .card { padding: 17px; box-shadow: 0 2px 5px #142b3703; }
+.c4cards h2 { font-size: 13px; color: #526b79; font-weight: 600; margin: 0; }
+.c4cards .number { font-size: clamp(24px,2.3vw,36px); margin: 9px 0 7px; letter-spacing: -1px; overflow-wrap: anywhere; }
+.c4cards .number.good, .c4cards .number.bad, .c4cards .number.warn { background: transparent; }
+.c4cards small { display: block; font-size: 12px; line-height: 1.4; }
+.c4panel { margin-top: 18px; padding: 20px; }
+
+/* SECTION: Camera and bag history sit side by side on laptops. The image keeps
+   its proportions, with a neutral placeholder when freshness logic hides it.
+   No stale frame or placeholder is presented as a live camera image. */
+#c4visionPanel[open] > summary { padding-bottom: 16px; border-bottom: 1px solid #e4ebef; }
+#c4cameraState { margin-left: 10px; vertical-align: middle; }
+.c4visionGrid { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(320px,1fr); gap: 24px; padding-top: 16px; }
+.c4cameraColumn, .c4journeyColumn { min-width: 0; }
+/* SECTION: Keep camera selection next to its freshness text. Labels identify
+   checkpoint roles; switching views never starts/stops camera capture or timing. */
+.c4cameraPicker { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.c4cameraPicker select { max-width: 100%; }
+#c4cameraInfo { font-size: 12px; color: var(--muted); min-height: 18px; overflow-wrap: anywhere; }
+.c4cameraStage { display: flex; align-items: center; justify-content: center; width: 100%; height: clamp(240px,36vh,400px); background: #102a36; border-radius: 10px; overflow: hidden; }
+#c4cameraImage { display: block; width: 100%; height: 100%; object-fit: contain; }
+.c4cameraPlaceholder { display: flex; align-items: center; flex-direction: column; gap: 8px; color: #c4d6df; padding: 24px; text-align: center; }
+.c4cameraPlaceholder span { font-size: 13px; }
+#c4cameraImage:not(.hidden) + .c4cameraPlaceholder { display: none; }
+#c4tags { margin: 12px 0 6px; gap: 6px; }
+#c4tags p { font-size: 13px; color: var(--muted); margin: 0; }
+.c4cameraHint { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.c4cameraHint span { display: block; color: #526b79; }
+
+/* SECTION: Alerts appear before history so an active problem remains prominent.
+   A bounded desktop history area scrolls independently instead of stretching the
+   preview panel. Timing settings remain accessible below the same recorded data. */
+.c4journeyColumn { padding-left: 24px; border-left: 1px solid #e4ebef; }
+.c4sectionHeading { margin-bottom: 14px; }
+.c4sectionHeading h3 { font-size: 21px; margin-top: 2px; letter-spacing: -.4px; }
+.c4journeyScroll { max-height: 350px; overflow: auto; padding-right: 8px; scrollbar-width: thin; }
+.c4tagTrip { padding: 14px 0; border-bottom: 1px solid #e4ebef; overflow-wrap: anywhere; }
+.c4tagTrip:first-child { padding-top: 0; }
+.c4tagTrip strong { font-size: 15px; margin-right: 8px; }
+.c4tagTrip p { font-size: 13px; color: var(--muted); margin: 5px 0 0; }
+#c4tagAlerts .alert { font-size: 13px; margin: 0 0 12px; padding: 14px; }
+#c4tagTrips > p { font-size: 14px; color: var(--muted); }
+.c4tagSettings { margin-top: 18px; padding: 12px; background: #f5f8fa; border: 1px solid #e4ebef; border-radius: 8px; }
+.c4tagSettings summary { font-size: 13px; }
+.c4tagSettings p { font-size: 12px; margin-bottom: 0; color: var(--muted); }
+#c4tagLimits { gap: 10px; align-items: end; margin: 12px 0; }
+#c4tagLimits label { font-size: 12px; }
+#c4tagLimits input { display: block; width: 120px; margin-top: 4px; }
+#c4tagAction:empty, #c4action:empty { display: none; }
+#c4tagAction { margin-top: 12px; font-size: 13px; }
+
+/* SECTION: Motor diagnostics use two columns. The active timer remains visible;
+   longer rule explanations are available on demand. Existing charts and topic
+   settings retain their controls and do not change the underlying calculations. */
+.c4healthPanel h2 { font-size: 18px; margin: 0; }
+#c4sharedTimer { margin: 14px 0 0; font-size: 14px; }
+#c4timers { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; }
+.c4timer { padding: 16px 0; min-width: 0; }
 .c4timer .badge { margin-left: 8px; }
-.c4timer p { margin: 4px 0; }
-.c4plot { width: 100%; display: block; }
+.c4timer p { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.c4ruleDetails { border-top: 1px solid #e4ebef; padding-top: 12px; }
+.c4ruleDetails summary { font-size: 13px; font-weight: 500; color: var(--muted); }
+#c4rules { font-size: 13px; margin-top: 10px; }
+.c4plot { display: block; width: 100%; }
 .c4plot text { font: 14px system-ui; fill: #475d69; }
-#c4setup p { overflow-wrap: anywhere; }
+#c4setup p { overflow-wrap: anywhere; font-size: 14px; }
+footer { font-size: 12px; padding-top: 20px; color: var(--muted); }
 
-/* SECTION: The preview scales to the small display and never stretches a wide
-   camera frame. Recorded tag journeys use simple labelled rows, avoiding a
-   seven-column table that would be unreadable on the Jetson screen. */
-#c4cameraImage { width: 100%; max-height: 55vh; object-fit: contain; background: #102a36; border-radius: 8px; }
-#c4tags { margin: 12px 0; }
-.c4tagTrip { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-.c4tagTrip p { margin: 4px 0; }
-#c4tagLimits input { width: 120px; }
-
-/* SECTION: Narrow portrait screens wrap instead of shrinking text/buttons.
-   The same six measurements remain visible with vertical scrolling as needed.
-   A change of viewport never changes sampling, baselines or stored totals. */
+/* SECTION: Narrow windows and browser zoom wrap content instead of shrinking it.
+   The earlier small-screen use case remains functional with a stacked camera,
+   journeys and diagnostics, without horizontal page scrolling. */
+@media (max-width: 1100px) {
+  .c4cards { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .c4cards .number { font-size: 28px; }
+}
+@media (max-width: 900px) {
+  .c4main { padding: 16px; }
+  header { padding: 14px 16px; }
+  .c4visionGrid { grid-template-columns: 1fr; gap: 20px; }
+  .c4journeyColumn { padding: 20px 0 0; border-left: 0; border-top: 1px solid #e4ebef; }
+  .c4journeyScroll { max-height: none; overflow: visible; }
+  #c4timers { grid-template-columns: 1fr; gap: 0; }
+  .c4cameraStage, #c4cameraImage { max-height: 55vh; }
+}
 @media (max-width: 550px) {
-  .c4cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .c4cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .c4cards .number { font-size: 25px; }
+  .c4cards .card, .c4panel { padding: 14px; }
+  #c4cameraState { display: inline-block; margin: 8px 0 0; }
+  .c4cameraHint { line-height: 1.7; }
 }

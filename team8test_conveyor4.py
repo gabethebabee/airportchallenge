@@ -215,6 +215,33 @@ class Conveyor4Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config({'current_topic':'Conveyor4/FLAG'})
 
+    # Broker retention has no sensor timestamp. Its values may be displayed as
+    # last known but cannot supply calibration samples, movement totals or health.
+    # Live messages replace the cache; late retained messages cannot overwrite a
+    # currently fresh observation.
+    def test_retained_cache_is_display_only_and_live_takes_priority(self):
+        service=Conveyor4MQTT(self.monitor)
+        for topic,payload in [('Conveyor4/get_belt_speed',b'6.783669'),('actual/current',b'3.3981')]:
+            service.on_message(None,None,SimpleNamespace(topic=topic,payload=payload,retain=True,dup=False))
+        self.now+=60
+        state=self.monitor.snapshot()
+        self.assertIsNone(state['metrics']['speed']['value'])
+        self.assertEqual(state['metrics']['speed']['last_known']['source'],'retained')
+        self.assertEqual(state['metrics']['current']['last_known']['value'],3.3981)
+        self.assertEqual(state['metrics']['speed']['samples'],0)
+        self.assertEqual(state['distance_m'],0)
+        self.assertEqual(state['runtime_seconds'],0)
+        self.assertFalse(state['flag'])
+        self.warm()
+        self.assertTrue(self.monitor.snapshot()['flag'])
+        service.on_message(None,None,SimpleNamespace(topic='actual/current',payload=b'3',retain=True,dup=False))
+        metric=self.monitor.snapshot()['metrics']['current']
+        self.assertEqual(metric['last_known']['source'],'live')
+        self.assertEqual(metric['last_known']['value'],10)
+        self.now+=5
+        self.assertIsNone(self.monitor.snapshot()['metrics']['current']['value'])
+        self.assertEqual(self.monitor.snapshot()['metrics']['current']['last_known']['value'],10)
+
     def test_api_returns_focused_metrics(self):
         self.warm()
         handler = object.__new__(dashboard.DashboardHandler)

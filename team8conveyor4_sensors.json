@@ -1,0 +1,145 @@
+[
+  {
+    "id": "team8-c4-sensors-tab",
+    "type": "tab",
+    "label": "Team8 Conveyor 4 read-only sensors",
+    "disabled": true,
+    "info": "Review on the assigned PLC before enabling. Encoder 0, voltage readback 7. Current not mapped."
+  },
+  {
+    "id": "team8-c4-sensors-broker",
+    "type": "mqtt-broker",
+    "name": "",
+    "broker": "129.97.228.106",
+    "port": "1883",
+    "clientid": "",
+    "usetls": false,
+    "compatmode": false,
+    "keepalive": "60",
+    "cleansession": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "true",
+    "birthPayload": "ONLINE",
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "true",
+    "closePayload": "OFFLINE",
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "true",
+    "willPayload": "DISCONNECTED"
+  },
+  {
+    "id": "team8-c4-sensors-device",
+    "type": "groov-io-device",
+    "address": "localhost",
+    "msgQueueFullBehavior": "DROP_OLD"
+  },
+  {
+    "id": "team8-c4-encoder",
+    "type": "groov-io-input",
+    "z": "team8-c4-sensors-tab",
+    "device": "team8-c4-sensors-device",
+    "dataType": "channel-digital-feature-value",
+    "moduleIndex": "",
+    "channelIndex": "0",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "sendInitialValue": true,
+    "deadband": "0",
+    "scanTimeSec": "1.0",
+    "name": "Read encoder count (channel 0)",
+    "x": 180,
+    "y": 100,
+    "wires": [
+      [
+        "team8-c4-speed"
+      ]
+    ]
+  },
+  {
+    "id": "team8-c4-voltage",
+    "type": "groov-io-input",
+    "z": "team8-c4-sensors-tab",
+    "device": "team8-c4-sensors-device",
+    "dataType": "channel-analog",
+    "moduleIndex": "",
+    "channelIndex": "7",
+    "mmpAddress": "0xF0D81000",
+    "mmpType": "int32",
+    "mmpLength": "1",
+    "mmpEncoding": "ascii",
+    "sendInitialValue": true,
+    "deadband": "0",
+    "scanTimeSec": "1.0",
+    "name": "Read voltage (channel 7)",
+    "x": 180,
+    "y": 240,
+    "wires": [
+      [
+        "team8-c4-volts"
+      ]
+    ]
+  },
+  {
+    "id": "team8-c4-speed",
+    "type": "function",
+    "z": "team8-c4-sensors-tab",
+    "name": "Encoder to cm/s",
+    "func": "// Read-only calculation: no PLC output is written.\nconst now=Date.now(), raw=msg.payload;\nconst count=Number(raw), prev=context.get('previous');\nlet speed=null;\nif (raw!==null && raw!=='' && typeof raw!=='boolean' && Number.isFinite(count) && count>=0) {\n  if (prev && now>prev.at && now-prev.at<=3000 && count>=prev.count)\n    speed=(count-prev.count)/(700*4)*(10.5*3.14)/((now-prev.at)/1000);\n  context.set('previous',{count,at:now});\n} else context.set('previous',null);\nmsg.payload=JSON.stringify(speed);msg.retain=false;return msg;",
+    "initialize": "// Clear pre-deploy counter history.\ncontext.set('previous',null);",
+    "outputs": 1,
+    "x": 490,
+    "y": 100,
+    "wires": [
+      [
+        "team8-c4-publish-speed"
+      ]
+    ]
+  },
+  {
+    "id": "team8-c4-publish-speed",
+    "type": "mqtt out",
+    "z": "team8-c4-sensors-tab",
+    "name": "Conveyor4/get_belt_speed",
+    "topic": "Conveyor4/get_belt_speed",
+    "qos": "0",
+    "retain": "false",
+    "broker": "team8-c4-sensors-broker",
+    "x": 830,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "team8-c4-volts",
+    "type": "function",
+    "z": "team8-c4-sensors-tab",
+    "name": "Voltage in V",
+    "func": "// Read actual channel 7 voltage; never relabel it as amperage.\nconst raw=msg.payload, value=Number(raw);\nmsg.payload=JSON.stringify(raw!==null && raw!=='' && typeof raw!=='boolean' && Number.isFinite(value) && value>=0 ? value : null);\nmsg.retain=false;return msg;",
+    "initialize": "// Clear pre-deploy counter history.\ncontext.set('previous',null);",
+    "outputs": 1,
+    "x": 490,
+    "y": 240,
+    "wires": [
+      [
+        "team8-c4-publish-volts"
+      ]
+    ]
+  },
+  {
+    "id": "team8-c4-publish-volts",
+    "type": "mqtt out",
+    "z": "team8-c4-sensors-tab",
+    "name": "Conveyor4/get_motor_voltage",
+    "topic": "Conveyor4/get_motor_voltage",
+    "qos": "0",
+    "retain": "false",
+    "broker": "team8-c4-sensors-broker",
+    "x": 830,
+    "y": 240,
+    "wires": []
+  }
+]

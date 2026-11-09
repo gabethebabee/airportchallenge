@@ -36,7 +36,12 @@ def camera_info():
 # OpenCV auto-selection on the Jetson can choose GStreamer even for a USB camera.
 # Explicit V4L2 bypasses that path; a CSI camera may instead need a verified
 # GStreamer pipeline. This does not change the installed OpenCV or camera driver.
-def open_capture(cv2, camera=0, pipeline=None, backend='auto'):
+def open_capture(cv2, camera=0, pipeline=None, backend='auto', width=1280, height=720, warmup=4):
+    if backend == 'jetson':
+        if pipeline:
+            raise ValueError('Use a device index with jetson capture, not --pipeline')
+        from team8jetson_capture import JetsonCapture
+        return JetsonCapture(camera,width,height,warmup)
     if pipeline:
         if backend == 'v4l2':
             raise ValueError('A GStreamer pipeline cannot use the V4L2 backend')
@@ -73,6 +78,13 @@ def make_detector(cv2, family='tag36h11', backend='auto'):
     if family not in FAMILIES:
         raise ValueError('Unsupported AprilTag family')
     failures = []
+    if backend in ('auto', 'bundled'):
+        try:
+            from team8apriltag_native import load_detector
+            detector = load_detector(family)
+            return 'Bundled native AprilTag', lambda gray: normalized(detector.detect(gray), family)
+        except Exception as error:
+            failures.append('bundled: ' + str(error))
     if backend in ('auto', 'opencv'):
         try:
             aruco = cv2.aruco
@@ -221,7 +233,10 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--camera-info', action='store_true', help='List Linux camera device names without opening them')
     parser.add_argument('--capture-check', action='store_true', help='Read five frames without MQTT or an AprilTag detector')
-    parser.add_argument('--capture-backend', choices=['auto', 'v4l2', 'gstreamer'], default='auto')
+    parser.add_argument('--capture-backend', choices=['auto', 'v4l2', 'gstreamer', 'jetson'], default='auto')
+    parser.add_argument('--capture-width', type=int, default=1280, help='Requested gstCamera width')
+    parser.add_argument('--capture-height', type=int, default=720, help='Requested gstCamera height')
+    parser.add_argument('--capture-warmup', type=float, default=4, help='gstCamera warm-up seconds')
     parser.add_argument('--camera', type=int, default=0)
     parser.add_argument('--pipeline', help='Optional staff-verified CSI/GStreamer camera pipeline')
     parser.add_argument('--checkpoint', choices=['A', 'B', 'AB'], default='AB')
@@ -229,7 +244,7 @@ def main():
     parser.add_argument('--split-x', type=float, default=0.5)
     parser.add_argument('--gap', type=float, default=0.1)
     parser.add_argument('--family', choices=sorted(FAMILIES), default='tag36h11')
-    parser.add_argument('--backend', choices=['auto', 'opencv', 'pupil', 'apriltag'], default='auto')
+    parser.add_argument('--backend', choices=['auto', 'bundled', 'opencv', 'pupil', 'apriltag'], default='auto')
     parser.add_argument('--preview-only', action='store_true')
     parser.add_argument('--broker', default='129.97.228.106')
     parser.add_argument('--port', type=int, default=1883)
@@ -245,6 +260,8 @@ def main():
     if args.camera_info:
         camera_info()
         return
+    if not (160 <= args.capture_width <= 3840 and 120 <= args.capture_height <= 2160 and 0 <= args.capture_warmup <= 10):
+        parser.error('Use capture width 160-3840, height 120-2160 and warmup 0-10 seconds')
     if not (0 < args.fps <= 5 and 0 < args.detect_fps <= 15 and 160 <= args.width <= 960 and 10 <= args.quality <= 85):
         parser.error('Use FPS 0–5, detection FPS 0–15, width 160–960, quality 10–85')
     try:
@@ -254,7 +271,8 @@ def main():
     if args.capture_check:
         capture = None
         try:
-            capture = open_capture(cv2, args.camera, args.pipeline, args.capture_backend)
+            capture = open_capture(cv2, args.camera, args.pipeline, args.capture_backend,
+                                   args.capture_width,args.capture_height,args.capture_warmup)
             frame = initial_frame(capture)
             for _ in range(4):
                 ok, next_frame = capture.read()
@@ -265,7 +283,7 @@ def main():
                 frame.shape[1], frame.shape[0], args.capture_backend))
             print('No MQTT connection or AprilTag detector was started.')
             return
-        except (ValueError, RuntimeError) as error:
+        except (ValueError, RuntimeError, ImportError) as error:
             parser.error(str(error))
         finally:
             if capture is not None:
@@ -283,9 +301,10 @@ def main():
         parser.error(str(error))
     capture = None
     try:
-        capture = open_capture(cv2, args.camera, args.pipeline, args.capture_backend)
+        capture = open_capture(cv2, args.camera, args.pipeline, args.capture_backend,
+                               args.capture_width,args.capture_height,args.capture_warmup)
         first_frame = initial_frame(capture)
-    except (ValueError, RuntimeError) as error:
+    except (ValueError, RuntimeError, ImportError) as error:
         if capture is not None:
             capture.release()
         parser.error(str(error))

@@ -1,5 +1,135 @@
 # Jetson camera -> MQTT -> dashboard, using AprilTags
 
+## Staff gstCamera capture option
+
+`--capture-backend jetson` uses the staff's `jetson.utils.gstCamera` method. It
+requests 1280x720 by default, allows four seconds to initialize, then calls
+`CaptureRGBA(zeroCopy=1)`. CUDA pixels are synchronized, mapped through NumPy and
+copied to uint8 BGR frames for the existing detector/JPEG publisher. No
+`jetson.inference` or `glDisplay` window is needed. NVIDIA libraries must already
+be installed in that Jetson's Python environment; the laptop does not need them.
+
+Copy the updated `team8apriltag_camera.py` and new `team8jetson_capture.py` to the
+existing Jetson project folder. No detector rebuild is needed. Stop the previous
+publisher for the camera being tested, and close any staff test program using
+that same device. Then, for example, test device 1:
+
+```bash
+python3 team8apriltag_camera.py --capture-check --capture-backend jetson --camera 1
+```
+
+Use the actual device index from `--camera-info`, not necessarily 1. Optional
+`--capture-width 640 --capture-height 480` changes the requested capture size if
+1280x720 fails or two cameras exceed the available USB bandwidth. Requested
+resolution is not a guarantee that the device/installed driver can support it.
+
+After capture succeeds, camera B can run using its distinct existing topics:
+
+```bash
+python3 -u team8apriltag_camera.py --backend bundled --capture-backend jetson --camera 1 --checkpoint B --frame-topic Conveyor4/camera/B/frame --tags-topic Conveyor4/apriltags/B --status-topic Conveyor4/camera/B/status
+```
+
+Camera A may keep using its working V4L2 method. Both backends produce the same
+MQTT protocol, so no dashboard or sensor changes are required for this adapter.
+The adapter is tested with simulated NVIDIA objects; actual capture still needs
+the onsite five-frame check. Staff's original sample uses a display loop; its
+bare `except` continues into rendering after a failed read. This adapter instead
+rejects that failed frame, so it cannot silently reuse the previous image.
+
+## Two physical cameras: laptop update, no Jetson rebuild
+
+The laptop dashboard now supports independent A/B camera inboxes and a **View
+camera** selector. Both feed the same persistent tag journeys. Restart the laptop
+dashboard to load its new Python subscriptions, then hard-refresh the browser.
+The existing Jetson publisher already supports all the options below; no script
+upload, detector rebuild or configuration editing is required on the Jetson.
+
+First identify device indexes from the laptop's PowerShell:
+
+```powershell
+ssh ideasclinic@172.18.26.168 "cd ~/team8jetson && python3 team8apriltag_camera.py --camera-info"
+```
+
+Do not assume the second physical camera is `/dev/video1`: some webcams expose
+multiple video interfaces. Test its candidate index (replace `1` as needed):
+
+```powershell
+ssh ideasclinic@172.18.26.168 "cd ~/team8jetson && python3 team8apriltag_camera.py --capture-check --capture-backend v4l2 --camera 1"
+```
+
+Stop the previous one-camera/AB publisher before starting camera A, so it does not
+keep the device occupied or generate a B event within A's image. If an old SSH
+session exited but its camera process remains alive, inspect it before restarting;
+do not start competing publishers on one camera or shared topic.
+
+**Camera A**, in one PowerShell window (existing original topics):
+
+```powershell
+ssh -t ideasclinic@172.18.26.168 "cd ~/team8jetson && python3 -u team8apriltag_camera.py --backend bundled --capture-backend v4l2 --camera 0 --checkpoint A"
+```
+
+**Camera B**, in another PowerShell window (use the device index that passed):
+
+```powershell
+ssh -t ideasclinic@172.18.26.168 "cd ~/team8jetson && python3 -u team8apriltag_camera.py --backend bundled --capture-backend v4l2 --camera 1 --checkpoint B --frame-topic Conveyor4/camera/B/frame --tags-topic Conveyor4/apriltags/B --status-topic Conveyor4/camera/B/status"
+```
+
+Leave both windows running. Present the same tag family/ID at physical A then
+physical B. In this arrangement the **whole image** of each camera is its assigned
+checkpoint; the earlier left/gap/right split applies only to `--checkpoint AB`.
+Bag timing continues regardless of the selected preview. A stale/offline camera
+does not replace the other image, and historical journeys remain visible.
+
+| Camera | Frame topic | Tag topic | Status topic |
+| --- | --- | --- | --- |
+| A | `Conveyor4/camera/frame` | `Conveyor4/apriltags` | `Conveyor4/camera/status` |
+| B | `Conveyor4/camera/B/frame` | `Conveyor4/apriltags/B` | `Conveyor4/camera/B/status` |
+
+Optional laptop configuration keys for B are `camera_b_topic`, `tags_b_topic`,
+and `camera_b_status_topic`. Their defaults match the command above. Sensor and
+motor FLAG behavior is unchanged. Each camera publishes about one preview per
+second by default; operating both increases traffic and native detector CPU use.
+
+## Offline detector included: start here on this Jetson
+
+The Jetson reported that all preinstalled detector options are missing. The ZIP
+now includes a pinned copy of [swatbotics/apriltag](https://github.com/swatbotics/apriltag)
+C source and its Python wrapper, plus a local build installer. No internet, pip,
+sudo, CMake or OpenCV replacement is used. The Jetson needs an existing C compiler
+(`cc` or `gcc`), its normal C development headers/pthread library, and NumPy.
+
+After copying/extracting the updated ZIP, run inside `~/team8jetson`:
+
+```bash
+python3 team8install_apriltag.py --check
+python3 team8install_apriltag.py
+python3 team8apriltag_camera.py --check --backend bundled
+```
+
+The installer verifies the archive hash, compiles a native library for that
+machine, and checks that a generated tag36h11 ID 0 is decoded while a blank image
+produces no tag. Success says `SELF-TEST PASSED`. If compilation fails, send the
+full error; missing development tools may require staff's offline packages.
+This has no automatic network/package installation fallback.
+
+Then run the publisher with `--backend bundled` and the capture options that
+passed the independent camera test. For a verified USB camera on device 0:
+
+```bash
+python3 team8apriltag_camera.py --backend bundled --capture-backend v4l2 --camera 0 --checkpoint AB
+```
+
+This does not solve the separate camera-frame failure: capture still has to pass.
+There is no `--preview-only` on the detection command, since that disables tags.
+
+The source commit and archive SHA-256 are in `team8apriltag-source.json`.
+The source archive retains upstream copyright/license notices. The local copy of
+the wrapper changes only the expected native library basename to
+`team8libapriltag.so`; its matching upstream C code is unchanged. Generated files
+live under `team8apriltag_native/`; no global Python installation is modified.
+Our integration/build scripts contain explanatory comments. The bundled
+third-party implementation retains its original comments and file structure.
+
 The Jetson reads its attached camera. It recognizes printed AprilTags, sends checkpoint events to the lab MQTT broker, and publishes small JPEG previews. The dashboard subscribes to that broker and displays them under **Camera feed & AprilTag checkpoints**, below the six motor readings. The browser never opens the Jetson camera directly.
 
 ## 1. Copy and check on the Jetson
@@ -12,7 +142,7 @@ python3 team8apriltag_camera.py --check
 
 This checks Python, OpenCV, an AprilTag detector, and Paho without opening the camera or contacting the broker. The code supports Python 3.6.9. It tries existing OpenCV AprilTag dictionaries, then `pupil_apriltags`, then `apriltag`. One working backend is required; ordinary barcode support alone is insufficient.
 
-**If this check fails, show its exact output to staff.** This project does not install packages automatically. Do not blindly replace the Jetson's prepared OpenCV. Offline packages/native libraries must match the Jetson's architecture and Python 3.6, rather than your Windows laptop. Python syntax compatibility does not guarantee these native dependencies are installed.
+**If this check fails, use the bundled offline build above and send its exact error if it fails.** This project does not install packages automatically. Do not blindly replace the Jetson's prepared OpenCV. Offline packages/native libraries must match the Jetson's architecture and Python 3.6, rather than your Windows laptop. Python syntax compatibility does not guarantee these native dependencies are installed.
 
 To test just the camera preview if a detector is missing:
 
@@ -72,6 +202,14 @@ Both machines must be able to reach **129.97.228.106:1883**. Internet access is 
 
 ## 4. Print tags and test A-to-B
 
+Matching test images are now included: `team8tag36h11-0.png`,
+`team8tag36h11-1.png`, and `team8tag36h11-2.png`. They use exact codes from
+the bundled detector's source table, with the same cell layout as its passing
+Jetson self-test. Regenerate with `python3 team8make_tags.py` (standard library
+only). Start by presenting **one** image, fully visible and flat, with its white
+margin preserved. Hold it still until the dashboard displays its family and ID.
+An active preview proves image transport, not recognition of an arbitrary marker.
+
 Use real **tag36h11** AprilTag images, each with a different ID. Start with IDs **0, 1, and 2**. Get the original images from the [AprilRobotics tag image repository](https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11). Preserve the white margin, print clearly, keep the tag flat and well lit, and make it large enough to occupy many camera pixels. These are square AprilTags, not QR codes or ordinary barcodes.
 
 The default `AB` setup uses **one camera with a wide view**:
@@ -85,7 +223,10 @@ Move a printed tag from left to right. The preview shows tag outlines and checkp
 
 If travel is right to left, add `--a-side right`. Adjust the regions with `--split-x 0.5 --gap 0.1`. These are image positions, not measured physical distances. The detector runs up to 5 times per second by default, so a tag must be visible long enough in each region. Seeing B first does not invent an A departure. Repeated views at A do not reset its clock. After completion, a new A can start another trip, subject to the existing 3-second A debounce.
 
-**One active camera publisher is supported by this dashboard inbox.** If the camera cannot see both physical checkpoints, this one-camera arrangement cannot measure the whole journey. `--checkpoint A` or `B` can test a single checkpoint, but two simultaneous camera publishers require a separate per-camera inbox/topic extension. Do not run competing publishers on these shared topics. Each physical bag needs its own family/ID while in flight; two bags with the same printed ID cannot be distinguished.
+**One-camera mode remains supported on camera A's original topics.** For two
+physical checkpoints, use the two-camera setup at the top of this guide with
+separate topics/inboxes. Each physical bag needs its own family/ID while in
+flight; two bags with the same printed ID cannot be distinguished.
 
 ## MQTT topics and limits
 

@@ -1,5 +1,13 @@
 # Conveyor 4: speed, current and FLAG
 
+**Broker discovery update:** onsite inspection found numeric
+`Conveyor4/get_motor_current` and `Conveyor4/get_belt_speed` publications. Current
+is now configured by default; the existing scales assume A and cm/s and should
+be checked against publisher calibration. Retained values display as last known,
+with source age unknown, and never count as live health or movement. Voltage was
+not present in that inspection. See `team8SENSORS.md` for the direct MQTT path;
+the earlier source-file limitations below describe what was originally supplied.
+
 The expandable **Camera feed & AprilTag checkpoints** panel now shows MQTT camera previews and real tag-based journeys. Start the publisher on the camera-owning Jetson using [team8APRILTAGS.md](team8APRILTAGS.md). Camera/tag messages use separate topics and never modify the motor FLAG. The dashboard machine only needs broker access, not direct camera or SSH access.
 
 The main dashboard now focuses on six values: **belt speed, motor current, FLAG, distance ran, time ran, jam counter**. Run `python3 team8dashboard.py` on the Jetson and open http://127.0.0.1:8080. Restart an already-running Python server before refreshing the page.

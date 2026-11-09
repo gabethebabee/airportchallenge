@@ -38,6 +38,28 @@ class TimingTests(unittest.TestCase):
     # Assertions therefore check the exposed timing classification as well as stored
     # departure/arrival behavior.
     def status(self): return self.tracker.snapshot()['trips'][0]
+
+    # Reset clears active/completed trips and their alerts, but preserves limits
+    # and old delivery IDs. A fresh A can start immediately with a new journey ID;
+    # a retransmitted old A or a stale acknowledgement cannot recreate/affect it.
+    def test_reset_journeys_deduplicates_old_messages_and_keeps_limits(self):
+        self.tracker.configure(1,2)
+        first=self.scan('A',event='old-a')['trip_id']
+        self.now+=3
+        self.assertEqual(len(self.tracker.incidents()),1)
+        result=self.tracker.reset_journeys()
+        self.assertEqual(result['cleared'],1)
+        self.assertEqual(self.tracker.snapshot()['trips'],[])
+        self.assertEqual(self.tracker.incidents(),[])
+        self.assertEqual(self.tracker.snapshot()['standard'],{'minimum':1,'maximum':2})
+        self.assertIsNone(self.scan('A',event='old-a')['trip_id'])
+        new=self.scan('A',event='new-a')['trip_id']
+        self.assertGreater(new,first)
+        self.assertEqual(len(self.tracker.snapshot()['trips']),1)
+        with self.assertRaises(ValueError):
+            self.tracker.acknowledge(first)
+        self.tracker.reset_journeys()
+        self.assertIsNotNone(self.scan('A',event='immediate-new-a')['trip_id'])
     # Regression check: matching bag time and limits. Uses fakes/in-memory state, never live
     # equipment.
     # This scenario exercises matching bag time and limits. The setup uses controlled inputs and

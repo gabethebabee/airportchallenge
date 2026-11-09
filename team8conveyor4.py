@@ -18,7 +18,7 @@ from team8monitor import mqtt_client
 DEFAULTS = {
     'broker': '129.97.228.106', 'port': 1883, 'monitor_type': 'conveyor4',
     'speed_topic': 'Conveyor4/get_belt_speed',
-    'current_topic': None,  # The supplied flow contains voltage, not an amperage topic.
+    'current_topic': 'Conveyor4/get_motor_current',  # Observed on the assigned broker.
     'voltage_topic': 'Conveyor4/get_motor_voltage',
     'flag_topic': 'Conveyor4/FLAG', 'status_topic': 'Conveyor4/STATUS',
     'speed_key': None, 'current_key': None, 'voltage_key': None,
@@ -28,6 +28,8 @@ DEFAULTS = {
     'stale_seconds': 4.0, 'moving_threshold_cm_s': 0.05,
     'camera_topic': 'Conveyor4/camera/frame', 'tags_topic': 'Conveyor4/apriltags',
     'camera_status_topic': 'Conveyor4/camera/status',
+    'camera_b_topic': 'Conveyor4/camera/B/frame', 'tags_b_topic': 'Conveyor4/apriltags/B',
+    'camera_b_status_topic': 'Conveyor4/camera/B/status',
 }
 
 
@@ -38,7 +40,8 @@ DEFAULTS = {
 def validate_config(config):
     values = {**DEFAULTS, **config}
     topic_keys = ('speed_topic', 'current_topic', 'voltage_topic', 'flag_topic', 'status_topic',
-                  'camera_topic', 'tags_topic', 'camera_status_topic')
+                  'camera_topic', 'tags_topic', 'camera_status_topic',
+                  'camera_b_topic', 'tags_b_topic', 'camera_b_status_topic')
     for key in topic_keys:
         topic = values[key]
         if topic is not None and (not isinstance(topic, str) or not topic.strip() or '+' in topic or '#' in topic):
@@ -100,6 +103,18 @@ class Conveyor4Monitor:
         self.message = 'MQTT not connected'
         self.last_error = None
         self.bad_messages = 0
+        self.observations = {}  # Last-known values are presentation only, never live evidence.
+
+    # SECTION: Cache broker-retained values for an explicitly historical display.
+    # MQTT retention supplies no trustworthy measurement timestamp. Therefore it
+    # must not advance averages, timers, distance, runtime or verified normal FLAG.
+    def remember_retained(self, name, value):
+        if name not in self.channels or type(value) not in (int,float) or not math.isfinite(value) or not 0 <= value <= 1e9:
+            return False
+        with self.lock:
+            if not self._fresh(self.channels[name],self.clock()):
+                self.observations[name] = {'value':value,'source':'retained','received':self.clock()}
+        return True
 
     # SECTION: Connection loss breaks timer and integration continuity.
     # Baselines and unresolved abnormal episodes are retained, but old readings lose
@@ -131,6 +146,7 @@ class Conveyor4Monitor:
             # accidentally inherit the old shared timer's start time.
             self._evaluate(now)
             channel = self.channels[name]
+            self.observations[name] = {'value':value,'source':'live','received':now}
             previous_age = now - channel['at'] if channel['at'] is not None else None
             continuous = previous_age is not None and 0 <= previous_age <= self.config['stale_seconds']
             if name == 'speed' and continuous and self.connected:
@@ -268,6 +284,10 @@ class Conveyor4Monitor:
                     'upper': reference*(1+self.config['deviation_fraction']) if reference is not None else None,
                     'deviation_seconds': max(0, now-channel['pending']) if channel['pending'] is not None else 0,
                     'timing': channel['pending'] is not None, 'abnormal': channel['alarm'],
+                    'last_known': ({'value':self.observations[name]['value'],
+                                    'source':self.observations[name]['source'],
+                                    'receipt_age_seconds':max(0,now-self.observations[name]['received'])}
+                                   if name in self.observations else None),
                 }
             alarm = self.abnormal or any(metrics[name]['abnormal'] for name in ('speed','current'))
             fresh = all(metrics[name]['value'] is not None for name in ('speed','current'))
@@ -297,9 +317,19 @@ class Conveyor4MQTT:
     # Build exact input-topic mappings and publication bookkeeping. No connection
     # is made until start() runs, so unit tests can supply a recording fake client
     # without touching the laboratory broker or any physical device.
-    def __init__(self, monitor, factory=mqtt_client, vision=None):
+    def __init__(self, monitor, factory=mqtt_client, vision=None, vision_b=None):
         self.monitor, self.config, self.factory = monitor, monitor.config, factory
         self.vision = vision
+        # Each camera owns its frame/session/freshness state, while both inboxes
+        # share the journey tracker. Keep A's original topics for compatibility.
+        self.camera_inputs = {}
+        self.vision_inboxes = [inbox for inbox in (vision, vision_b) if inbox is not None]
+        for inbox, keys in ((vision, ('camera_topic','tags_topic','camera_status_topic')),
+                            (vision_b, ('camera_b_topic','tags_b_topic','camera_b_status_topic'))):
+            if inbox is not None:
+                for key, kind in zip(keys, ('frame','tags','status')):
+                    if self.config[key]:
+                        self.camera_inputs[self.config[key]] = (inbox, kind)
         self.client = None
         self.last_published = None
         self.lock = threading.Lock()
@@ -330,10 +360,8 @@ class Conveyor4MQTT:
         if rc == 0:
             for topic in self.topics:
                 client.subscribe(topic, qos=1)
-            if self.vision:
-                for key in ('camera_topic', 'tags_topic', 'camera_status_topic'):
-                    if self.config[key]:
-                        client.subscribe(self.config[key], qos=0 if key == 'camera_topic' else 1)
+            for topic, (_, kind) in self.camera_inputs.items():
+                client.subscribe(topic, qos=0 if kind == 'frame' else 1)
             self.last_published = None
             self.tick(force=True)
 
@@ -342,8 +370,8 @@ class Conveyor4MQTT:
     # No disconnected interval can continue a timer or add operating distance.
     def on_disconnect(self, client, userdata, rc):
         self.monitor.connection(False, 'MQTT disconnected — readings unknown')
-        if self.vision:
-            self.vision.disconnect()
+        for inbox in self.vision_inboxes:
+            inbox.disconnect()
 
     # SECTION: Decode exactly the configured raw number or JSON field.
     # Speed/current scaling is explicit. Retained and duplicate deliveries do not
@@ -351,17 +379,15 @@ class Conveyor4MQTT:
     def on_message(self, client, userdata, message):
         # Camera bytes never enter the numeric sensor decoder or FLAG logic.
         # The preview is deliberately unretained; tag events use delivery IDs.
-        if self.vision:
-            if message.topic == self.config['camera_topic']:
-                self.vision.receive_frame(message.payload, message.retain)
-                return
-            if message.topic == self.config['tags_topic']:
-                self.vision.receive_tags(message.payload, message.retain)
-                return
-            if message.topic == self.config['camera_status_topic']:
-                self.vision.receive_status(message.payload)
-                return
-        if message.retain or getattr(message, 'dup', False) or len(message.payload) > 4096:
+        camera_input = self.camera_inputs.get(message.topic)
+        if camera_input:
+            inbox, kind = camera_input
+            if kind == 'status':
+                inbox.receive_status(message.payload)
+            else:
+                getattr(inbox, 'receive_' + kind)(message.payload, message.retain)
+            return
+        if getattr(message, 'dup', False) or len(message.payload) > 4096:
             return
         name = self.topics.get(message.topic)
         if name is None:
@@ -377,9 +403,13 @@ class Conveyor4MQTT:
                 value *= self.config['speed_scale_to_cm_s']
             elif name == 'current':
                 value *= self.config['current_scale_to_a']
-            self.monitor.ingest(name, value)
+            if message.retain:
+                self.monitor.remember_retained(name,value)
+            else:
+                self.monitor.ingest(name, value)
         except (ValueError, TypeError, KeyError, UnicodeError):
-            self.monitor.invalidate(name, 'Invalid payload on ' + message.topic)
+            if not message.retain:
+                self.monitor.invalidate(name, 'Invalid payload on ' + message.topic)
         self.tick()
 
     # SECTION: Publish transitions promptly and diagnostics at most once per second.

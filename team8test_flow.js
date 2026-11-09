@@ -106,3 +106,33 @@ telemetry=JSON.parse(sensorExecute('team8-sensor-payload').payload);
 assert.equal(telemetry.speed_cm_s,null);assert.equal(telemetry.run_requested,null);
 console.log('Read-only MQTT sensor exporter conversion, freshness, and no-write checks passed.');
 console.log('Flow wiring, authorization, routing, expiry, stop race, encoder units, and browser script syntax passed.');
+
+/* SECTION: Check the Conveyor 4 server exporter in isolation. All input nodes
+ * must be read-only and its measurements must use the supplied channels/units.
+ * Fake timestamps exercise first samples, real counter deltas and resets without
+ * connecting to Groov hardware or publishing any real MQTT messages. */
+const c4nodes=JSON.parse(fs.readFileSync('team8conveyor4_sensors.json','utf8'));
+assert.equal(c4nodes.find(node=>node.type==='tab').disabled,true);
+assert.ok(!c4nodes.some(node=>node.type==='groov-io-write'||node.type==='mqtt in'));
+assert.equal(c4nodes.find(node=>node.id==='team8-c4-encoder').channelIndex,'0');
+assert.equal(c4nodes.find(node=>node.id==='team8-c4-voltage').channelIndex,'7');
+const c4memory=new Map(); let c4time=1000;
+function c4sensorRun(identity,payload) {
+  const fn=c4nodes.find(node=>node.id===identity).func;
+  return vm.runInNewContext('(function(msg){'+fn+'})(msg)',{
+    msg:{payload},context:{get:key=>c4memory.get(key),set:(key,value)=>c4memory.set(key,value)},
+    Date:{now:()=>c4time}
+  });
+}
+assert.equal(JSON.parse(c4sensorRun('team8-c4-speed',0).payload),null);
+c4time+=1000;
+assert.ok(Math.abs(JSON.parse(c4sensorRun('team8-c4-speed',2800).payload)-32.97)<0.001);
+c4time+=1000;
+assert.equal(JSON.parse(c4sensorRun('team8-c4-speed',2800).payload),0);
+c4time+=1000;
+assert.equal(JSON.parse(c4sensorRun('team8-c4-speed',1).payload),null);
+assert.equal(JSON.parse(c4sensorRun('team8-c4-volts',2.3).payload),2.3);
+assert.equal(JSON.parse(c4sensorRun('team8-c4-volts',false).payload),null);
+assert.deepEqual(c4nodes.filter(node=>node.type==='mqtt out').map(node=>node.topic).sort(),
+  ['Conveyor4/get_belt_speed','Conveyor4/get_motor_voltage'].sort());
+console.log('Conveyor 4 read-only sensor bridge channels, conversion and unknown handling passed.');
